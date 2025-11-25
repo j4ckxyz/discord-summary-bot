@@ -4,6 +4,7 @@ import logger from './utils/logger.js';
 import summariseCommand from './commands/summarise.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
+import { config } from './utils/config.js';
 
 // Validate environment variables
 if (!process.env.DISCORD_BOT_TOKEN) {
@@ -85,7 +86,7 @@ async function handleTextCommand(message) {
     const helpMessage = `**Discord Summary Bot - Help**
 
 **Basic Usage:**
-\`!summary\` or \`/summarise\` - Summarise messages since last summary (min 7 messages)
+\`!summary\` or \`/summarise\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
 \`@${client.user.username} help\` - Show this help message
 
 **Advanced Options:**
@@ -94,8 +95,8 @@ async function handleTextCommand(message) {
 \`!summary <userID>\` - Same as above, using Discord user ID
 
 **Rate Limits:**
-• 5 summaries per 30 minutes per channel
-• Summaries are capped at 500 characters
+• ${config.maxUsesPerWindow} summaries per ${config.cooldownMinutes} minutes per channel
+• Summaries are capped at ${config.maxSummaryLength} characters
 
 **Tips:**
 • User summaries focus only on that user's messages

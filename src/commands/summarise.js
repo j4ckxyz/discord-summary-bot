@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import rateLimitService from '../services/ratelimit.js';
 import summariserService from '../services/summariser.js';
 import logger from '../utils/logger.js';
+import { config } from '../utils/config.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -26,7 +27,7 @@ export default {
         const helpMessage = `**Discord Summary Bot - Help**
 
 **Basic Usage:**
-\`/summarise\` - Summarise messages since last summary (min 7 messages)
+\`/summarise\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
 \`!summary\` or \`@${interaction.client.user.username}\` - Same as above
 
 **Advanced Options:**
@@ -39,8 +40,8 @@ export default {
 \`!summary @user\` - Summarise a user's 50 most recent messages
 
 **Rate Limits:**
-• 5 summaries per 30 minutes per channel
-• Summaries are capped at 500 characters
+• ${config.maxUsesPerWindow} summaries per ${config.cooldownMinutes} minutes per channel
+• Summaries are capped at ${config.maxSummaryLength} characters
 
 **Tips:**
 • User summaries focus only on that user's messages
