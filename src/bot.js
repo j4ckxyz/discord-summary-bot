@@ -72,6 +72,37 @@ async function handleTextCommand(message) {
     if (parts.length > 1) {
       targetInput = parts[1];
     }
+  } else if (isMention) {
+    // For mentions, get everything after the mention
+    const parts = message.content.split(/\s+/);
+    if (parts.length > 1) {
+      targetInput = parts[1];
+    }
+  }
+
+  // Check for help command
+  if (targetInput && targetInput.toLowerCase() === 'help') {
+    const helpMessage = `**Discord Summary Bot - Help**
+
+**Basic Usage:**
+\`!summary\` or \`/summarise\` - Summarise messages since last summary (min 7 messages)
+\`@${client.user.username} help\` - Show this help message
+
+**Advanced Options:**
+\`!summary 500\` - Summarise the last 500 messages
+\`!summary @user\` - Summarise a user's 50 most recent messages
+\`!summary <userID>\` - Same as above, using Discord user ID
+
+**Rate Limits:**
+• 5 summaries per 30 minutes per channel
+• Summaries are capped at 500 characters
+
+**Tips:**
+• User summaries focus only on that user's messages
+• All summaries are neutral and objective`;
+
+    await message.reply(helpMessage);
+    return;
   }
 
   // Parse the target input to determine if it's a message count or user ID

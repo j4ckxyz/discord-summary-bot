@@ -21,6 +21,35 @@ export default {
       const channel = interaction.channel;
       const targetInput = interaction.options.getString('target');
 
+      // Check for help command
+      if (targetInput && targetInput.toLowerCase() === 'help') {
+        const helpMessage = `**Discord Summary Bot - Help**
+
+**Basic Usage:**
+\`/summarise\` - Summarise messages since last summary (min 7 messages)
+\`!summary\` or \`@${interaction.client.user.username}\` - Same as above
+
+**Advanced Options:**
+\`/summarise target:500\` - Summarise the last 500 messages
+\`/summarise target:@user\` - Summarise a user's 50 most recent messages
+\`/summarise target:<userID>\` - Same as above, using Discord user ID
+
+**Prefix Commands:**
+\`!summary 500\` - Summarise the last 500 messages
+\`!summary @user\` - Summarise a user's 50 most recent messages
+
+**Rate Limits:**
+• 5 summaries per 30 minutes per channel
+• Summaries are capped at 500 characters
+
+**Tips:**
+• User summaries focus only on that user's messages
+• All summaries are neutral and objective`;
+
+        await interaction.reply({ content: helpMessage, ephemeral: true });
+        return;
+      }
+
       // Parse the target input to determine if it's a message count or user ID
       let summaryMode = 'default'; // default, count, or user
       let targetValue = null;
@@ -48,7 +77,7 @@ export default {
             targetValue = mentionMatch[1];
           } else {
             await interaction.reply({
-              content: 'Invalid input. Please provide either a number of messages (e.g. 500) or a user mention/ID.',
+              content: 'Invalid input. Please provide either a number of messages (e.g. 500), a user mention/ID, or "help" for usage information.',
               ephemeral: true
             });
             return;
