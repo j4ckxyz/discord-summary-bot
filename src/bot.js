@@ -33,9 +33,13 @@ async function registerCommands() {
   try {
     logger.info('Started refreshing application (/) commands.');
 
+    const commandsData = commands.map(cmd => cmd.data.toJSON());
+    
+    logger.info(`Registering ${commandsData.length} command(s): ${commandsData.map(c => c.name).join(', ')}`);
+
     await rest.put(
       Routes.applicationCommands(client.user.id),
-      { body: commands.map(cmd => cmd.data) }
+      { body: commandsData }
     );
 
     logger.info('Successfully reloaded application (/) commands.');
