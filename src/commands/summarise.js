@@ -1,12 +1,12 @@
+import { SlashCommandBuilder } from 'discord.js';
 import rateLimitService from '../services/ratelimit.js';
 import summariserService from '../services/summariser.js';
 import logger from '../utils/logger.js';
 
 export default {
-  data: {
-    name: 'summarise',
-    description: 'Generate an AI summary of recent messages in this channel'
-  },
+  data: new SlashCommandBuilder()
+    .setName('summarise')
+    .setDescription('Generate an AI summary of recent messages in this channel'),
 
   async execute(interaction) {
     try {
