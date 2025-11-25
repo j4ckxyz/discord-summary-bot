@@ -143,6 +143,8 @@ async function handleTextCommand(message) {
     // Send thinking message
     const thinkingMsg = await message.reply('Generating summary...');
 
+    logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
+
     try {
       // Generate and post summary - pass the thinking message to edit it
       const result = await summariserService.generateAndPostSummary(
@@ -165,7 +167,11 @@ async function handleTextCommand(message) {
       logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
     } catch (summaryError) {
       logger.error('Error generating summary:', summaryError);
-      await thinkingMsg.edit('An error occurred while generating the summary. Please try again with a smaller message count.');
+      try {
+        await thinkingMsg.edit('An error occurred while generating the summary. Please try again with a smaller message count.');
+      } catch (editError) {
+        logger.error('Could not edit thinking message:', editError);
+      }
       return;
     }
   } catch (error) {
