@@ -118,8 +118,8 @@ class SummariserService {
               const referencedMsg = await channel.messages.fetch(msg.referencedMessageId);
               msg.referencedAuthor = referencedMsg.author.username;
             } catch (error) {
-              // If we can't fetch it, just leave it null
-              logger.warn(`Could not fetch referenced message ${msg.referencedMessageId}`);
+              // Referenced message is likely old/deleted/outside fetch window - silently skip
+              // This is normal behavior and doesn't indicate a problem
             }
           }
         }
