@@ -68,7 +68,7 @@ export default {
           } else {
             // Likely a message count
             summaryMode = 'count';
-            targetValue = numericValue; // No cap, fetch as many as requested
+            targetValue = Math.min(numericValue, 10000); // Cap at 10k to prevent timeouts
           }
         } else {
           // Try to extract user ID from mention format <@123456789>

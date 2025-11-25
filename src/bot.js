@@ -119,7 +119,7 @@ async function handleTextCommand(message) {
         targetValue = targetInput;
       } else {
         summaryMode = 'count';
-        targetValue = numericValue; // No cap, fetch as many as requested
+        targetValue = Math.min(numericValue, 10000); // Cap at 10k to prevent timeouts
       }
     } else {
       const mentionMatch = targetInput.match(/^<@!?(\d+)>$/);

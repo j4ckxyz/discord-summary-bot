@@ -99,7 +99,12 @@ class SummariserService {
           totalFetched += batch.size;
           lastId = batch.last().id;
           
-          logger.debug(`Fetched ${totalFetched}/${targetValue} messages`);
+          // Log progress every 500 messages for large fetches
+          if (totalFetched % 500 === 0 || totalFetched === targetValue) {
+            logger.info(`Fetched ${totalFetched}/${targetValue} messages`);
+          } else {
+            logger.debug(`Fetched ${totalFetched}/${targetValue} messages`);
+          }
           
           // Small delay to avoid rate limits
           if (totalFetched < targetValue) {
