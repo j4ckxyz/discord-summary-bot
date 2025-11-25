@@ -1,0 +1,31 @@
+{
+  "name": "discord-summary-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot that generates AI-powered summaries of channel conversations",
+  "main": "src/bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node --watch src/bot.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "ai",
+    "summary",
+    "openrouter",
+    "llm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "better-sqlite3": "^9.4.3",
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.6.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
