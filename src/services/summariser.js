@@ -139,9 +139,10 @@ class SummariserService {
    * @param {string} botUserId - Bot's user ID to filter out bot messages
    * @param {string} mode - 'default', 'count', or 'user'
    * @param {any} targetValue - Message count or user ID depending on mode
+   * @param {Object} editableMessage - Optional message to edit instead of sending new one
    * @returns {Promise<Object>} - Summary result with message and metadata
    */
-  async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null) {
+  async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null, editableMessage = null) {
     try {
       // Fetch messages
       const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode, targetValue);
@@ -172,27 +173,33 @@ class SummariserService {
       // Generate summary using LLM
       const summaryText = await llmService.summariseMessages(messages);
 
-      // Get last summary to reply to (only in default mode)
-      const lastSummary = mode === 'default' ? SummaryModel.getLastSummary(guildId, channel.id) : null;
-      
       let sentMessage;
-      if (lastSummary && mode === 'default') {
-        try {
-          // Try to fetch and reply to the last summary
-          const lastMessage = await channel.messages.fetch(lastSummary.message_id);
-          sentMessage = await lastMessage.reply(summaryText);
-        } catch (error) {
-          // If we can't fetch the old message, just send a new one
-          logger.warn('Could not reply to last summary, sending new message');
+      
+      // If we have an editable message (from prefix/mention command), edit it
+      if (editableMessage) {
+        sentMessage = await editableMessage.edit(summaryText);
+      } else {
+        // For slash commands, send new message or reply to previous summary
+        const lastSummary = mode === 'default' ? SummaryModel.getLastSummary(guildId, channel.id) : null;
+        
+        if (lastSummary && mode === 'default') {
+          try {
+            // Try to fetch and reply to the last summary
+            const lastMessage = await channel.messages.fetch(lastSummary.message_id);
+            sentMessage = await lastMessage.reply(summaryText);
+          } catch (error) {
+            // If we can't fetch the old message, just send a new one
+            logger.warn('Could not reply to last summary, sending new message');
+            sentMessage = await channel.send(summaryText);
+          }
+        } else {
+          // For count/user mode or first summary, send a new message
           sentMessage = await channel.send(summaryText);
         }
-      } else {
-        // For count/user mode or first summary, send a new message
-        sentMessage = await channel.send(summaryText);
       }
 
-      // Store the new summary (only in default mode to maintain chain)
-      if (mode === 'default') {
+      // Store the new summary (only in default mode to maintain chain, and not for edited messages)
+      if (mode === 'default' && !editableMessage) {
         const timestamp = Math.floor(Date.now() / 1000);
         SummaryModel.createSummary(guildId, channel.id, sentMessage.id, timestamp);
       }

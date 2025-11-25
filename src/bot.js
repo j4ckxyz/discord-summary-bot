@@ -62,23 +62,64 @@ async function handleTextCommand(message) {
 
   const userId = message.author.id;
   const guildId = message.guild.id;
+  const channelId = message.channel.id;
   const channel = message.channel;
+
+  // Parse target input from message content
+  let targetInput = null;
+  if (isPrefix) {
+    const parts = message.content.split(/\s+/);
+    if (parts.length > 1) {
+      targetInput = parts[1];
+    }
+  }
+
+  // Parse the target input to determine if it's a message count or user ID
+  let summaryMode = 'default';
+  let targetValue = null;
+  
+  if (targetInput) {
+    const numericValue = parseInt(targetInput, 10);
+    
+    if (!isNaN(numericValue)) {
+      if (numericValue > 10000) {
+        summaryMode = 'user';
+        targetValue = targetInput;
+      } else {
+        summaryMode = 'count';
+        targetValue = Math.min(numericValue, 1000);
+      }
+    } else {
+      const mentionMatch = targetInput.match(/^<@!?(\d+)>$/);
+      if (mentionMatch) {
+        summaryMode = 'user';
+        targetValue = mentionMatch[1];
+      }
+    }
+  }
 
   try {
     // Check rate limit
-    const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId);
+    const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
     
     if (!rateLimitCheck.allowed) {
-      const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.remainingSeconds);
-      await message.reply(`You're on cooldown. Please wait ${timeRemaining} before requesting another summary.`);
+      const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
+      await message.reply(`You've reached your limit of summaries. Please wait ${timeRemaining} before requesting another summary.`);
       return;
     }
 
     // Send thinking message
     const thinkingMsg = await message.reply('Generating summary...');
 
-    // Generate and post summary
-    const result = await summariserService.generateAndPostSummary(channel, guildId);
+    // Generate and post summary - pass the thinking message to edit it
+    const result = await summariserService.generateAndPostSummary(
+      channel, 
+      guildId, 
+      client.user.id,
+      summaryMode,
+      targetValue,
+      thinkingMsg
+    );
 
     if (!result.success) {
       await thinkingMsg.edit(result.error);
@@ -86,12 +127,9 @@ async function handleTextCommand(message) {
     }
 
     // Update cooldown
-    rateLimitService.updateCooldown(userId, guildId);
+    rateLimitService.updateCooldown(userId, guildId, channelId);
 
-    // Delete thinking message
-    await thinkingMsg.delete();
-
-    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'})`);
+    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
 
   } catch (error) {
     logger.error('Error handling text command:', error);
