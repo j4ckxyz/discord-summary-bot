@@ -9,24 +9,83 @@ class SummariserService {
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
    * @param {string} botUserId - Bot's user ID to filter out bot messages
+   * @param {string} mode - 'default', 'count', or 'user'
+   * @param {any} targetValue - Message count or user ID depending on mode
    * @returns {Promise<Array>} - Array of formatted message objects
    */
-  async fetchMessagesSinceLastSummary(channel, guildId, botUserId) {
+  async fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode = 'default', targetValue = null) {
     try {
-      const lastSummary = SummaryModel.getLastSummary(guildId, channel.id);
+      let fetchedMessages;
+      
+      if (mode === 'count') {
+        // Fetch specific number of messages
+        fetchedMessages = await channel.messages.fetch({ limit: Math.min(targetValue, 100) });
+        
+        // If they requested more than 100, we need to paginate
+        if (targetValue > 100) {
+          let remaining = targetValue - 100;
+          let lastId = fetchedMessages.last().id;
+          
+          while (remaining > 0 && fetchedMessages.size < targetValue) {
+            const batch = await channel.messages.fetch({ 
+              limit: Math.min(remaining, 100),
+              before: lastId
+            });
+            
+            if (batch.size === 0) break;
+            
+            fetchedMessages = new Map([...fetchedMessages, ...batch]);
+            lastId = batch.last().id;
+            remaining -= batch.size;
+          }
+        }
+      } else if (mode === 'user') {
+        // Fetch messages from a specific user (up to 50 most recent)
+        const USER_MESSAGE_LIMIT = 50;
+        let userMessages = [];
+        let lastId = null;
+        
+        // Keep fetching until we have 50 messages from the target user or run out of messages
+        while (userMessages.length < USER_MESSAGE_LIMIT) {
+          const fetchOptions = { limit: 100 };
+          if (lastId) fetchOptions.before = lastId;
+          
+          const batch = await channel.messages.fetch(fetchOptions);
+          if (batch.size === 0) break;
+          
+          const userMessagesInBatch = batch.filter(msg => msg.author.id === targetValue);
+          userMessages.push(...userMessagesInBatch.values());
+          
+          if (userMessages.length >= USER_MESSAGE_LIMIT) {
+            userMessages = userMessages.slice(0, USER_MESSAGE_LIMIT);
+            break;
+          }
+          
+          lastId = batch.last().id;
+          
+          // Safety limit: don't fetch more than 500 total messages
+          if (batch.size < 100) break;
+        }
+        
+        // Convert array back to Collection-like structure
+        fetchedMessages = new Map(userMessages.map(msg => [msg.id, msg]));
+      } else {
+        // Default mode: fetch messages since last summary
+        const lastSummary = SummaryModel.getLastSummary(guildId, channel.id);
+        
+        let fetchOptions = { limit: config.maxMessagesToFetch };
+        
+        if (lastSummary) {
+          fetchOptions.after = lastSummary.message_id;
+        }
+        
+        fetchedMessages = await channel.messages.fetch(fetchOptions);
+      }
       
       let messages = [];
-      let fetchOptions = { limit: config.maxMessagesToFetch };
-      
-      if (lastSummary) {
-        // Fetch messages after the last summary
-        fetchOptions.after = lastSummary.message_id;
-      }
-
-      const fetchedMessages = await channel.messages.fetch(fetchOptions);
       
       // Filter out bot messages and format
-      messages = fetchedMessages
+      messages = Array.from(fetchedMessages.values())
         .filter(msg => msg.author.id !== botUserId) // Filter out bot's own messages
         .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
         .map(msg => ({
@@ -78,38 +137,46 @@ class SummariserService {
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
    * @param {string} botUserId - Bot's user ID to filter out bot messages
+   * @param {string} mode - 'default', 'count', or 'user'
+   * @param {any} targetValue - Message count or user ID depending on mode
    * @returns {Promise<Object>} - Summary result with message and metadata
    */
-  async generateAndPostSummary(channel, guildId, botUserId) {
+  async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null) {
     try {
       // Fetch messages
-      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId);
+      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode, targetValue);
 
       if (messages.length === 0) {
+        if (mode === 'user') {
+          return {
+            success: false,
+            error: 'No messages found from the specified user.'
+          };
+        }
         return {
           success: false,
           error: 'No messages to summarise since the last summary.'
         };
       }
 
-      // Check if minimum message count is met
-      if (messages.length < config.minMessagesForSummary) {
+      // Check if minimum message count is met (only for default mode)
+      if (mode === 'default' && messages.length < config.minMessagesForSummary) {
         return {
           success: false,
           error: `Not enough messages to summarise. Need at least ${config.minMessagesForSummary} messages, but only ${messages.length} found.`
         };
       }
 
-      logger.info(`Summarising ${messages.length} messages in channel ${channel.id}`);
+      logger.info(`Summarising ${messages.length} messages in channel ${channel.id} (mode: ${mode})`);
 
       // Generate summary using LLM
       const summaryText = await llmService.summariseMessages(messages);
 
-      // Get last summary to reply to
-      const lastSummary = SummaryModel.getLastSummary(guildId, channel.id);
+      // Get last summary to reply to (only in default mode)
+      const lastSummary = mode === 'default' ? SummaryModel.getLastSummary(guildId, channel.id) : null;
       
       let sentMessage;
-      if (lastSummary) {
+      if (lastSummary && mode === 'default') {
         try {
           // Try to fetch and reply to the last summary
           const lastMessage = await channel.messages.fetch(lastSummary.message_id);
@@ -120,13 +187,15 @@ class SummariserService {
           sentMessage = await channel.send(summaryText);
         }
       } else {
-        // First summary in this channel
+        // For count/user mode or first summary, send a new message
         sentMessage = await channel.send(summaryText);
       }
 
-      // Store the new summary
-      const timestamp = Math.floor(Date.now() / 1000);
-      SummaryModel.createSummary(guildId, channel.id, sentMessage.id, timestamp);
+      // Store the new summary (only in default mode to maintain chain)
+      if (mode === 'default') {
+        const timestamp = Math.floor(Date.now() / 1000);
+        SummaryModel.createSummary(guildId, channel.id, sentMessage.id, timestamp);
+      }
 
       return {
         success: true,
