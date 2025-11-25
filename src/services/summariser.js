@@ -5,6 +5,65 @@ import { config } from '../utils/config.js';
 
 class SummariserService {
   /**
+   * Split a long message into Discord-safe chunks (max 2000 chars each)
+   * @param {string} text - The text to split
+   * @param {number} maxLength - Maximum length per chunk (default 2000)
+   * @returns {Array<string>} - Array of message chunks
+   */
+  splitIntoChunks(text, maxLength = 2000) {
+    if (text.length <= maxLength) {
+      return [text];
+    }
+
+    const chunks = [];
+    const lines = text.split('\n');
+    let currentChunk = '';
+
+    for (const line of lines) {
+      // If adding this line would exceed the limit
+      if ((currentChunk + line + '\n').length > maxLength) {
+        // If we have content in current chunk, save it
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim());
+          currentChunk = '';
+        }
+        
+        // If a single line is too long, split it at word boundaries
+        if (line.length > maxLength) {
+          const words = line.split(' ');
+          let linePart = '';
+          
+          for (const word of words) {
+            if ((linePart + word + ' ').length > maxLength) {
+              if (linePart.trim()) {
+                chunks.push(linePart.trim());
+              }
+              linePart = word + ' ';
+            } else {
+              linePart += word + ' ';
+            }
+          }
+          
+          if (linePart.trim()) {
+            currentChunk = linePart;
+          }
+        } else {
+          currentChunk = line + '\n';
+        }
+      } else {
+        currentChunk += line + '\n';
+      }
+    }
+
+    // Add remaining content
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+  }
+
+  /**
    * Fetch messages from a channel since the last summary
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
@@ -190,28 +249,41 @@ class SummariserService {
       // Generate summary using LLM
       const summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
 
+      // Split summary if it exceeds Discord's 2000 character limit
+      const summaryChunks = this.splitIntoChunks(summaryText, 2000);
+      
       let sentMessage;
       
-      // If we have an editable message (from prefix/mention command), edit it
+      // If we have an editable message (from prefix/mention command), edit it with first chunk
       if (editableMessage) {
-        sentMessage = await editableMessage.edit(summaryText);
+        sentMessage = await editableMessage.edit(summaryChunks[0]);
+        
+        // Send remaining chunks as new messages
+        for (let i = 1; i < summaryChunks.length; i++) {
+          await channel.send(summaryChunks[i]);
+        }
       } else {
-        // For slash commands, send new message or reply to previous summary
+        // For slash commands, send message or reply to previous summary
         const lastSummary = mode === 'default' ? SummaryModel.getLastSummary(guildId, channel.id) : null;
         
         if (lastSummary && mode === 'default') {
           try {
             // Try to fetch and reply to the last summary
             const lastMessage = await channel.messages.fetch(lastSummary.message_id);
-            sentMessage = await lastMessage.reply(summaryText);
+            sentMessage = await lastMessage.reply(summaryChunks[0]);
           } catch (error) {
             // If we can't fetch the old message, just send a new one
             logger.warn('Could not reply to last summary, sending new message');
-            sentMessage = await channel.send(summaryText);
+            sentMessage = await channel.send(summaryChunks[0]);
           }
         } else {
           // For count/user mode or first summary, send a new message
-          sentMessage = await channel.send(summaryText);
+          sentMessage = await channel.send(summaryChunks[0]);
+        }
+        
+        // Send remaining chunks as follow-up messages
+        for (let i = 1; i < summaryChunks.length; i++) {
+          await channel.send(summaryChunks[i]);
         }
       }
 
