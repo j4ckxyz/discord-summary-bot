@@ -56,10 +56,24 @@ async function handleTextCommand(message) {
   // Ignore bot messages
   if (message.author.bot) return;
 
+  // Ignore @everyone and @here
+  if (message.mentions.everyone) return;
+
   const isMention = message.mentions.has(client.user);
-  const isPrefix = message.content.startsWith('!summarise') || message.content.startsWith('!summary');
+  const isPrefix = message.content.startsWith('!summary');
 
   if (!isMention && !isPrefix) return;
+
+  // Ignore replies to the bot
+  if (message.reference) {
+    try {
+      const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      if (referencedMessage.author.id === client.user.id) return;
+    } catch (error) {
+      // If we can't fetch the message, just proceed
+      logger.warn(`Could not fetch referenced message for reply check: ${error.message}`);
+    }
+  }
 
   const userId = message.author.id;
   const guildId = message.guild.id;
@@ -86,7 +100,7 @@ async function handleTextCommand(message) {
     const helpMessage = `**Discord Summary Bot - Help**
 
 **Basic Usage:**
-\`!summary\` or \`/summarise\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
+\`!summary\` or \`/summary\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
 \`@${client.user.username} help\` - Show this help message
 
 **Advanced Options:**
@@ -189,7 +203,7 @@ client.once('ready', async () => {
   await registerCommands();
   
   logger.info('Bot is ready to summarise!');
-  logger.info('Commands: /summarise, !summarise, !summary, @mention');
+  logger.info('Commands: /summary, !summary, @mention');
 });
 
 // Event: Interaction created (slash commands)

@@ -6,7 +6,7 @@ import { config } from '../utils/config.js';
 
 export default {
   data: new SlashCommandBuilder()
-    .setName('summarise')
+    .setName('summary')
     .setDescription('Generate an AI summary of recent messages in this channel')
     .addStringOption(option =>
       option.setName('target')
@@ -27,13 +27,13 @@ export default {
         const helpMessage = `**Discord Summary Bot - Help**
 
 **Basic Usage:**
-\`/summarise\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
+\`/summary\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
 \`!summary\` or \`@${interaction.client.user.username}\` - Same as above
 
 **Advanced Options:**
-\`/summarise target:500\` - Summarise the last 500 messages
-\`/summarise target:@user\` - Summarise a user's 50 most recent messages
-\`/summarise target:<userID>\` - Same as above, using Discord user ID
+\`/summary target:500\` - Summarise the last 500 messages
+\`/summary target:@user\` - Summarise a user's 50 most recent messages
+\`/summary target:<userID>\` - Same as above, using Discord user ID
 
 **Prefix Commands:**
 \`!summary 500\` - Summarise the last 500 messages

@@ -79,13 +79,15 @@ A Discord bot that generates AI-powered summaries of channel conversations using
    npm start
    ```
 
-2. **In Discord, trigger a summary using any of these methods**
-   ```
-   /summarise              (Slash command - recommended)
-   !summarise              (Prefix command)
-   !summary                (Alternative prefix)
-   @YourBot                (Mention the bot)
-   ```
+### Commands
+
+The bot supports the following commands:
+
+```
+/summary              (Slash command - recommended)
+!summary              (Prefix command)
+@SummaryBot           (Mention the bot)
+```
 
 The bot will:
 - Check if you're on cooldown (30 minutes per user per server)

@@ -54,15 +54,12 @@ You should see:
 [timestamp] [INFO] Bot is ready to summarise!
 ```
 
-## Step 5: Use the Bot
-
-In any channel where the bot has access, use any of these commands:
-```
-/summarise              (Slash command)
-!summarise              (Prefix command)
-!summary                (Alternative prefix)
-@YourBot                (Mention the bot)
-```
+4. **Test the Bot**:
+   Go to a channel where the bot is present and type:
+   ```
+   /summary              (Slash command)
+   !summary              (Prefix command)
+   ```
 
 The bot will generate a summary of all messages since the last summary!
 
