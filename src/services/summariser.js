@@ -8,9 +8,10 @@ class SummariserService {
    * Fetch messages from a channel since the last summary
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
+   * @param {string} botUserId - Bot's user ID to filter out bot messages
    * @returns {Promise<Array>} - Array of formatted message objects
    */
-  async fetchMessagesSinceLastSummary(channel, guildId) {
+  async fetchMessagesSinceLastSummary(channel, guildId, botUserId) {
     try {
       const lastSummary = SummaryModel.getLastSummary(guildId, channel.id);
       
@@ -26,16 +27,44 @@ class SummariserService {
       
       // Filter out bot messages and format
       messages = fetchedMessages
-        .filter(msg => !msg.author.bot)
+        .filter(msg => msg.author.id !== botUserId) // Filter out bot's own messages
         .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
         .map(msg => ({
           author: msg.author.username,
+          authorId: msg.author.id,
           content: msg.content || '[attachment/embed]',
           timestamp: new Date(msg.createdTimestamp).toLocaleTimeString('en-GB', { 
             hour: '2-digit', 
             minute: '2-digit' 
-          })
+          }),
+          referencedMessageId: msg.reference?.messageId || null,
+          referencedAuthor: null // Will be filled in next step
         }));
+
+      // Build a map of message IDs to authors for reply chain tracking
+      const messageMap = new Map();
+      fetchedMessages.forEach(msg => {
+        messageMap.set(msg.id, msg.author.username);
+      });
+
+      // Fill in referenced author information
+      for (let msg of messages) {
+        if (msg.referencedMessageId) {
+          // Try to get from current batch first
+          if (messageMap.has(msg.referencedMessageId)) {
+            msg.referencedAuthor = messageMap.get(msg.referencedMessageId);
+          } else {
+            // Try to fetch the referenced message if not in current batch
+            try {
+              const referencedMsg = await channel.messages.fetch(msg.referencedMessageId);
+              msg.referencedAuthor = referencedMsg.author.username;
+            } catch (error) {
+              // If we can't fetch it, just leave it null
+              logger.warn(`Could not fetch referenced message ${msg.referencedMessageId}`);
+            }
+          }
+        }
+      }
 
       return messages;
     } catch (error) {
@@ -48,17 +77,26 @@ class SummariserService {
    * Generate and post a summary
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
+   * @param {string} botUserId - Bot's user ID to filter out bot messages
    * @returns {Promise<Object>} - Summary result with message and metadata
    */
-  async generateAndPostSummary(channel, guildId) {
+  async generateAndPostSummary(channel, guildId, botUserId) {
     try {
       // Fetch messages
-      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId);
+      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId);
 
       if (messages.length === 0) {
         return {
           success: false,
           error: 'No messages to summarise since the last summary.'
+        };
+      }
+
+      // Check if minimum message count is met
+      if (messages.length < config.minMessagesForSummary) {
+        return {
+          success: false,
+          error: `Not enough messages to summarise. Need at least ${config.minMessagesForSummary} messages, but only ${messages.length} found.`
         };
       }
 

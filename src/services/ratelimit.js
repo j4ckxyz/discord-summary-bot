@@ -6,30 +6,45 @@ class RateLimitService {
    * Check if a user can use the summary command
    * @param {string} userId - Discord user ID
    * @param {string} guildId - Discord guild ID
-   * @returns {Object} - {allowed: boolean, remainingSeconds: number}
+   * @param {string} channelId - Discord channel ID
+   * @returns {Object} - {allowed: boolean, remainingUses: number, timeUntilNextUse: number}
    */
-  checkRateLimit(userId, guildId) {
-    const isOnCooldown = CooldownModel.isOnCooldown(
+  checkRateLimit(userId, guildId, channelId) {
+    const canUse = CooldownModel.canUseCommand(
       userId, 
-      guildId, 
-      config.cooldownMinutes
+      guildId,
+      channelId,
+      config.cooldownMinutes,
+      config.maxUsesPerWindow
     );
 
-    if (isOnCooldown) {
-      const remainingSeconds = CooldownModel.getRemainingCooldown(
+    if (!canUse) {
+      const timeUntilNextUse = CooldownModel.getTimeUntilNextUse(
         userId,
         guildId,
-        config.cooldownMinutes
+        channelId,
+        config.cooldownMinutes,
+        config.maxUsesPerWindow
       );
       return {
         allowed: false,
-        remainingSeconds
+        remainingUses: 0,
+        timeUntilNextUse
       };
     }
 
+    const remainingUses = CooldownModel.getRemainingUses(
+      userId,
+      guildId,
+      channelId,
+      config.cooldownMinutes,
+      config.maxUsesPerWindow
+    );
+
     return {
       allowed: true,
-      remainingSeconds: 0
+      remainingUses,
+      timeUntilNextUse: 0
     };
   }
 
@@ -37,9 +52,10 @@ class RateLimitService {
    * Update the cooldown for a user after they use the command
    * @param {string} userId - Discord user ID
    * @param {string} guildId - Discord guild ID
+   * @param {string} channelId - Discord channel ID
    */
-  updateCooldown(userId, guildId) {
-    CooldownModel.updateCooldown(userId, guildId);
+  updateCooldown(userId, guildId, channelId) {
+    CooldownModel.recordUse(userId, guildId, channelId);
   }
 
   /**

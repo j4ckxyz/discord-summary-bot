@@ -32,14 +32,14 @@ const initDb = () => {
     )
   `);
 
-  // Table to track user cooldowns
+  // Table to track user cooldowns (now tracks usage count in time window)
   db.exec(`
     CREATE TABLE IF NOT EXISTS cooldowns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id TEXT NOT NULL,
       guild_id TEXT NOT NULL,
-      last_used INTEGER NOT NULL,
-      UNIQUE(user_id, guild_id)
+      channel_id TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
     )
   `);
 
@@ -50,8 +50,8 @@ const initDb = () => {
   `);
 
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_cooldowns_user_guild 
-    ON cooldowns(user_id, guild_id);
+    CREATE INDEX IF NOT EXISTS idx_cooldowns_user_guild_channel 
+    ON cooldowns(user_id, guild_id, channel_id, timestamp);
   `);
 };
 

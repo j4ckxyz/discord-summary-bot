@@ -66,7 +66,7 @@ class LLMService {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          max_tokens: 500,
+          max_tokens: 1000,
           temperature: 0.7
         },
         {
@@ -102,18 +102,24 @@ class LLMService {
 
   /**
    * Generate a summary from Discord messages
-   * @param {Array} messages - Array of message objects {author, content, timestamp}
+   * @param {Array} messages - Array of message objects {author, authorId, content, timestamp, referencedMessageId, referencedAuthor}
    * @returns {Promise<string>} - The summary text
    */
   async summariseMessages(messages) {
     const systemPrompt = config.summaryPrompt;
     
-    // Format messages for the LLM
+    // Format messages for the LLM with reply chain information
     const formattedMessages = messages
-      .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+      .map(msg => {
+        let msgStr = `[${msg.timestamp}] ${msg.author}: ${msg.content}`;
+        if (msg.referencedAuthor) {
+          msgStr += ` (replying to ${msg.referencedAuthor})`;
+        }
+        return msgStr;
+      })
       .join('\n');
 
-    const userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a summary in exactly ${config.maxSummaryLength} characters or less.`;
+    const userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a neutral summary in exactly ${config.maxSummaryLength} characters or less. Include who said what and note any conversation threads where users are replying to each other.`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     

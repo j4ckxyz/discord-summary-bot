@@ -12,15 +12,16 @@ export default {
     try {
       const userId = interaction.user.id;
       const guildId = interaction.guild.id;
+      const channelId = interaction.channel.id;
       const channel = interaction.channel;
 
       // Check rate limit
-      const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId);
+      const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
       
       if (!rateLimitCheck.allowed) {
-        const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.remainingSeconds);
+        const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
         await interaction.reply({
-          content: `You're on cooldown. Please wait ${timeRemaining} before requesting another summary.`,
+          content: `You've reached your limit of summaries. Please wait ${timeRemaining} before requesting another summary.`,
           ephemeral: true
         });
         return;
@@ -30,7 +31,7 @@ export default {
       await interaction.deferReply();
 
       // Generate and post summary
-      const result = await summariserService.generateAndPostSummary(channel, guildId);
+      const result = await summariserService.generateAndPostSummary(channel, guildId, interaction.client.user.id);
 
       if (!result.success) {
         await interaction.editReply(result.error);
@@ -38,11 +39,11 @@ export default {
       }
 
       // Update cooldown
-      rateLimitService.updateCooldown(userId, guildId);
+      rateLimitService.updateCooldown(userId, guildId, channelId);
 
       // Confirm to user (ephemeral)
       await interaction.editReply({
-        content: `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''}.`
+        content: `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''}. You have ${rateLimitCheck.remainingUses - 1} summaries remaining in the next 30 minutes.`
       });
 
       logger.info(`Summary created by ${interaction.user.tag} in ${interaction.guild.name}/#${channel.name}`);

@@ -33,46 +33,72 @@ export const SummaryModel = {
 };
 
 export const CooldownModel = {
-  // Check if user is on cooldown
-  isOnCooldown(userId, guildId, cooldownMinutes) {
-    const stmt = db.prepare(`
-      SELECT last_used FROM cooldowns 
-      WHERE user_id = ? AND guild_id = ?
-    `);
-    const result = stmt.get(userId, guildId);
-    
-    if (!result) return false;
-    
+  // Check if user has exceeded the rate limit (5 uses per 30 minutes)
+  canUseCommand(userId, guildId, channelId, cooldownMinutes, maxUses) {
     const now = Math.floor(Date.now() / 1000);
-    const cooldownSeconds = cooldownMinutes * 60;
-    return (now - result.last_used) < cooldownSeconds;
+    const cutoffTime = now - (cooldownMinutes * 60);
+    
+    const stmt = db.prepare(`
+      SELECT COUNT(*) as count FROM cooldowns 
+      WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
+    `);
+    const result = stmt.get(userId, guildId, channelId, cutoffTime);
+    
+    return result.count < maxUses;
   },
 
-  // Get remaining cooldown time in seconds
-  getRemainingCooldown(userId, guildId, cooldownMinutes) {
+  // Get remaining uses in current time window
+  getRemainingUses(userId, guildId, channelId, cooldownMinutes, maxUses) {
+    const now = Math.floor(Date.now() / 1000);
+    const cutoffTime = now - (cooldownMinutes * 60);
+    
     const stmt = db.prepare(`
-      SELECT last_used FROM cooldowns 
-      WHERE user_id = ? AND guild_id = ?
+      SELECT COUNT(*) as count FROM cooldowns 
+      WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
     `);
-    const result = stmt.get(userId, guildId);
+    const result = stmt.get(userId, guildId, channelId, cutoffTime);
+    
+    return Math.max(0, maxUses - result.count);
+  },
+
+  // Get time until next use is available
+  getTimeUntilNextUse(userId, guildId, channelId, cooldownMinutes, maxUses) {
+    const now = Math.floor(Date.now() / 1000);
+    const cutoffTime = now - (cooldownMinutes * 60);
+    
+    const stmt = db.prepare(`
+      SELECT timestamp FROM cooldowns 
+      WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
+      ORDER BY timestamp ASC
+      LIMIT 1
+    `);
+    const result = stmt.get(userId, guildId, channelId, cutoffTime);
     
     if (!result) return 0;
     
-    const now = Math.floor(Date.now() / 1000);
-    const cooldownSeconds = cooldownMinutes * 60;
-    const elapsed = now - result.last_used;
-    return Math.max(0, cooldownSeconds - elapsed);
+    const oldestUse = result.timestamp;
+    const expiryTime = oldestUse + (cooldownMinutes * 60);
+    return Math.max(0, expiryTime - now);
   },
 
-  // Update user's last used timestamp
-  updateCooldown(userId, guildId) {
+  // Record a new use
+  recordUse(userId, guildId, channelId) {
     const now = Math.floor(Date.now() / 1000);
     const stmt = db.prepare(`
-      INSERT INTO cooldowns (user_id, guild_id, last_used)
-      VALUES (?, ?, ?)
-      ON CONFLICT(user_id, guild_id) 
-      DO UPDATE SET last_used = ?
+      INSERT INTO cooldowns (user_id, guild_id, channel_id, timestamp)
+      VALUES (?, ?, ?, ?)
     `);
-    return stmt.run(userId, guildId, now, now);
+    return stmt.run(userId, guildId, channelId, now);
+  },
+
+  // Clean up old records (optional, for database maintenance)
+  cleanupOldRecords(cooldownMinutes) {
+    const now = Math.floor(Date.now() / 1000);
+    const cutoffTime = now - (cooldownMinutes * 60);
+    
+    const stmt = db.prepare(`
+      DELETE FROM cooldowns WHERE timestamp < ?
+    `);
+    return stmt.run(cutoffTime);
   }
 };
