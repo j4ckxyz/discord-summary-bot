@@ -103,9 +103,11 @@ class LLMService {
   /**
    * Generate a summary from Discord messages
    * @param {Array} messages - Array of message objects {author, authorId, content, timestamp, referencedMessageId, referencedAuthor}
+   * @param {string} mode - 'default', 'count', or 'user'
+   * @param {string} targetUsername - Username to focus on (for user mode)
    * @returns {Promise<string>} - The summary text
    */
-  async summariseMessages(messages) {
+  async summariseMessages(messages, mode = 'default', targetUsername = null) {
     const systemPrompt = config.summaryPrompt;
     
     // Format messages for the LLM with reply chain information
@@ -119,16 +121,45 @@ class LLMService {
       })
       .join('\n');
 
-    const userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a neutral summary in exactly ${config.maxSummaryLength} characters or less. Include who said what and note any conversation threads where users are replying to each other.`;
+    let userPrompt;
+    
+    if (mode === 'user' && targetUsername) {
+      // User-specific summary: focus only on what the target user said
+      userPrompt = `Messages from ${targetUsername}:\n\n${formattedMessages}\n\nProvide a neutral summary of what ${targetUsername} discussed in their 50 most recent messages. Focus ONLY on ${targetUsername}'s contributions. Only mention other users if they are directly relevant to what ${targetUsername} said (e.g., if ${targetUsername} replied to them or discussed them). The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
+    } else {
+      // Default summary: include everyone
+      userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a neutral summary. Include who said what and note any conversation threads where users are replying to each other. The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
+    }
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     
-    // Ensure summary doesn't exceed max length
-    if (summary.length > config.maxSummaryLength) {
-      return summary.substring(0, config.maxSummaryLength - 3) + '...';
+    // Ensure summary doesn't exceed max length and doesn't end with trailing dots
+    let trimmedSummary = summary.trim();
+    
+    if (trimmedSummary.length > config.maxSummaryLength) {
+      // Find the last complete sentence within the limit
+      const withinLimit = trimmedSummary.substring(0, config.maxSummaryLength);
+      const lastPeriod = withinLimit.lastIndexOf('.');
+      const lastExclamation = withinLimit.lastIndexOf('!');
+      const lastQuestion = withinLimit.lastIndexOf('?');
+      
+      const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+      
+      if (lastSentenceEnd > config.maxSummaryLength * 0.7) {
+        // If we can find a sentence ending in the last 30% of the limit, use it
+        trimmedSummary = withinLimit.substring(0, lastSentenceEnd + 1);
+      } else {
+        // Otherwise, just truncate at a word boundary
+        const lastSpace = withinLimit.lastIndexOf(' ');
+        if (lastSpace > 0) {
+          trimmedSummary = withinLimit.substring(0, lastSpace) + '.';
+        } else {
+          trimmedSummary = withinLimit + '.';
+        }
+      }
     }
     
-    return summary;
+    return trimmedSummary;
   }
 }
 

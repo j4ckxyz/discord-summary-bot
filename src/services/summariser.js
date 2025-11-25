@@ -170,8 +170,14 @@ class SummariserService {
 
       logger.info(`Summarising ${messages.length} messages in channel ${channel.id} (mode: ${mode})`);
 
+      // Get target username for user mode
+      let targetUsername = null;
+      if (mode === 'user' && messages.length > 0) {
+        targetUsername = messages[0].author;
+      }
+
       // Generate summary using LLM
-      const summaryText = await llmService.summariseMessages(messages);
+      const summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
 
       let sentMessage;
       
