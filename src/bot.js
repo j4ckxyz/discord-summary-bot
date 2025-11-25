@@ -143,26 +143,31 @@ async function handleTextCommand(message) {
     // Send thinking message
     const thinkingMsg = await message.reply('Generating summary...');
 
-    // Generate and post summary - pass the thinking message to edit it
-    const result = await summariserService.generateAndPostSummary(
-      channel, 
-      guildId, 
-      client.user.id,
-      summaryMode,
-      targetValue,
-      thinkingMsg
-    );
+    try {
+      // Generate and post summary - pass the thinking message to edit it
+      const result = await summariserService.generateAndPostSummary(
+        channel, 
+        guildId, 
+        client.user.id,
+        summaryMode,
+        targetValue,
+        thinkingMsg
+      );
 
-    if (!result.success) {
-      await thinkingMsg.edit(result.error);
+      if (!result.success) {
+        await thinkingMsg.edit(result.error);
+        return;
+      }
+
+      // Update cooldown
+      rateLimitService.updateCooldown(userId, guildId, channelId);
+
+      logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
+    } catch (summaryError) {
+      logger.error('Error generating summary:', summaryError);
+      await thinkingMsg.edit('An error occurred while generating the summary. Please try again with a smaller message count.');
       return;
     }
-
-    // Update cooldown
-    rateLimitService.updateCooldown(userId, guildId, channelId);
-
-    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
-
   } catch (error) {
     logger.error('Error handling text command:', error);
     await message.reply('An error occurred while generating the summary. Please try again later.');
