@@ -135,12 +135,26 @@ class LLMService {
       // Topic-based format for large message sets
       userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nAnalyze the conversation and identify the main topics discussed. Format your response as:
 
-**Topic Name**
-• Key point with participants (e.g., "Alice and Bob discussed X")
-• Another key point
-  - Sub-point if needed (e.g., specific detail or reply thread)
+**Topic Name (2-4 words)**
+• Brief summary of what happened (1 sentence, mention key participants)
+• Another key point if needed (1 sentence)
 
-Keep it concise but comprehensive. You can exceed ${config.maxSummaryLength} characters if needed to cover all topics properly. Focus on what was discussed and who said what.`;
+IMPORTANT RULES:
+- Keep each topic section SHORT (2-3 bullet points max)
+- Each bullet point should be ONE sentence only
+- Focus on WHAT was discussed and WHO participated
+- Be concise and to the point
+- Create multiple mini-topics rather than long detailed ones
+- Total output should stay under 2000 characters if possible
+
+Example format:
+**Server Setup**
+• Alice and Bob discussed migrating to Docker
+• Charlie suggested using compose files
+
+**Bug Reports**
+• Dave found a rate limit issue
+• Alice fixed it in commit abc123`;
     } else {
       // Default summary: include everyone
       userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a neutral summary. Include who said what and note any conversation threads where users are replying to each other. The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
@@ -187,7 +201,7 @@ Keep it concise but comprehensive. You can exceed ${config.maxSummaryLength} cha
    * @returns {string} - The system prompt
    */
   getTopicBasedSystemPrompt() {
-    return 'You are a Discord chat summariser. Your role is to analyze conversations and organize them by topic. Identify the main discussion topics and present them in a structured format with bullet points. Be neutral, objective, and comprehensive. Include who participated in each topic and what they said.';
+    return 'You are a Discord chat summariser. Organize conversations by topic using SHORT bullet points. Each topic should have 2-3 bullet points MAX, with each point being ONE sentence. Be concise, neutral, and objective. Always mention who said what.';
   }
 }
 
