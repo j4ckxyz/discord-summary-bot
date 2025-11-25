@@ -249,18 +249,42 @@ class SummariserService {
       // Generate summary using LLM
       const summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
 
+      // Validate summary is not empty
+      if (!summaryText || summaryText.trim().length === 0) {
+        logger.error('LLM returned empty summary');
+        return {
+          success: false,
+          error: 'Failed to generate summary - LLM returned empty response. Please try again.'
+        };
+      }
+
+      logger.debug(`Summary length: ${summaryText.length} characters`);
+
       // Split summary if it exceeds Discord's 2000 character limit
       const summaryChunks = this.splitIntoChunks(summaryText, 2000);
+      
+      logger.debug(`Split into ${summaryChunks.length} chunk(s)`);
+      
+      // Validate chunks are not empty
+      const validChunks = summaryChunks.filter(chunk => chunk && chunk.trim().length > 0);
+      
+      if (validChunks.length === 0) {
+        logger.error('All chunks are empty after splitting');
+        return {
+          success: false,
+          error: 'Failed to generate summary - splitting resulted in empty chunks. Please try again.'
+        };
+      }
       
       let sentMessage;
       
       // If we have an editable message (from prefix/mention command), edit it with first chunk
       if (editableMessage) {
-        sentMessage = await editableMessage.edit(summaryChunks[0]);
+        sentMessage = await editableMessage.edit(validChunks[0]);
         
         // Send remaining chunks as new messages
-        for (let i = 1; i < summaryChunks.length; i++) {
-          await channel.send(summaryChunks[i]);
+        for (let i = 1; i < validChunks.length; i++) {
+          await channel.send(validChunks[i]);
         }
       } else {
         // For slash commands, send message or reply to previous summary
@@ -270,20 +294,20 @@ class SummariserService {
           try {
             // Try to fetch and reply to the last summary
             const lastMessage = await channel.messages.fetch(lastSummary.message_id);
-            sentMessage = await lastMessage.reply(summaryChunks[0]);
+            sentMessage = await lastMessage.reply(validChunks[0]);
           } catch (error) {
             // If we can't fetch the old message, just send a new one
             logger.warn('Could not reply to last summary, sending new message');
-            sentMessage = await channel.send(summaryChunks[0]);
+            sentMessage = await channel.send(validChunks[0]);
           }
         } else {
           // For count/user mode or first summary, send a new message
-          sentMessage = await channel.send(summaryChunks[0]);
+          sentMessage = await channel.send(validChunks[0]);
         }
         
         // Send remaining chunks as follow-up messages
-        for (let i = 1; i < summaryChunks.length; i++) {
-          await channel.send(summaryChunks[i]);
+        for (let i = 1; i < validChunks.length; i++) {
+          await channel.send(validChunks[i]);
         }
       }
 

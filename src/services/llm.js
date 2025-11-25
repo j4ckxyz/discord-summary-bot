@@ -162,6 +162,8 @@ Example format:
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     
+    logger.debug(`LLM returned summary of ${summary.length} characters`);
+    
     // For topic format, don't enforce character limit
     if (useTopicFormat) {
       return summary.trim();
