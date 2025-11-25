@@ -79,9 +79,12 @@ A Discord bot that generates AI-powered summaries of channel conversations using
    npm start
    ```
 
-2. **In Discord, use the slash command**
+2. **In Discord, trigger a summary using any of these methods**
    ```
-   /summarise
+   /summarise              (Slash command - recommended)
+   !summarise              (Prefix command)
+   !summary                (Alternative prefix)
+   @YourBot                (Mention the bot)
    ```
 
 The bot will:

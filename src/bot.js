@@ -48,6 +48,107 @@ async function registerCommands() {
   }
 }
 
+import 'dotenv/config';
+import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
+import logger from './utils/logger.js';
+import summariseCommand from './commands/summarise.js';
+import rateLimitService from './services/ratelimit.js';
+import summariserService from './services/summariser.js';
+
+// Validate environment variables
+if (!process.env.DISCORD_BOT_TOKEN) {
+  logger.error('DISCORD_BOT_TOKEN is required in .env file');
+  process.exit(1);
+}
+
+if (!process.env.LLM_API_KEY) {
+  logger.error('LLM_API_KEY is required in .env file');
+  process.exit(1);
+}
+
+// Create Discord client
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+// Commands collection
+const commands = [summariseCommand];
+
+// Register slash commands
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
+  
+  try {
+    logger.info('Started refreshing application (/) commands.');
+
+    const commandsData = commands.map(cmd => cmd.data.toJSON());
+    
+    logger.info(`Registering ${commandsData.length} command(s): ${commandsData.map(c => c.name).join(', ')}`);
+
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commandsData }
+    );
+
+    logger.info('Successfully reloaded application (/) commands.');
+  } catch (error) {
+    logger.error('Error registering commands:', error);
+  }
+}
+
+// Handle prefix and mention-based commands
+async function handleTextCommand(message) {
+  // Ignore bot messages
+  if (message.author.bot) return;
+
+  const isMention = message.mentions.has(client.user);
+  const isPrefix = message.content.startsWith('!summarise') || message.content.startsWith('!summary');
+
+  if (!isMention && !isPrefix) return;
+
+  const userId = message.author.id;
+  const guildId = message.guild.id;
+  const channel = message.channel;
+
+  try {
+    // Check rate limit
+    const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId);
+    
+    if (!rateLimitCheck.allowed) {
+      const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.remainingSeconds);
+      await message.reply(`You're on cooldown. Please wait ${timeRemaining} before requesting another summary.`);
+      return;
+    }
+
+    // Send thinking message
+    const thinkingMsg = await message.reply('Generating summary...');
+
+    // Generate and post summary
+    const result = await summariserService.generateAndPostSummary(channel, guildId);
+
+    if (!result.success) {
+      await thinkingMsg.edit(result.error);
+      return;
+    }
+
+    // Update cooldown
+    rateLimitService.updateCooldown(userId, guildId);
+
+    // Delete thinking message
+    await thinkingMsg.delete();
+
+    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'})`);
+
+  } catch (error) {
+    logger.error('Error handling text command:', error);
+    await message.reply('An error occurred while generating the summary. Please try again later.');
+  }
+}
+
 // Event: Bot is ready
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}`);
@@ -57,6 +158,7 @@ client.once('ready', async () => {
   await registerCommands();
   
   logger.info('Bot is ready to summarise!');
+  logger.info('Commands: /summarise, !summarise, @mention');
 });
 
 // Event: Interaction created (slash commands)
@@ -83,6 +185,9 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 });
+
+// Event: Message created (for prefix and mention commands)
+client.on('messageCreate', handleTextCommand);
 
 // Event: Error handling
 client.on('error', (error) => {

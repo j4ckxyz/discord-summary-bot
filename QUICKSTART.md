@@ -56,9 +56,12 @@ You should see:
 
 ## Step 5: Use the Bot
 
-In any channel where the bot has access, type:
+In any channel where the bot has access, use any of these commands:
 ```
-/summarise
+/summarise              (Slash command)
+!summarise              (Prefix command)
+!summary                (Alternative prefix)
+@YourBot                (Mention the bot)
 ```
 
 The bot will generate a summary of all messages since the last summary!
