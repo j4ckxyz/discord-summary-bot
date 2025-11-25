@@ -18,27 +18,38 @@ class SummariserService {
       let fetchedMessages;
       
       if (mode === 'count') {
-        // Fetch specific number of messages
-        fetchedMessages = await channel.messages.fetch({ limit: Math.min(targetValue, 100) });
+        // Fetch specific number of messages with pagination
+        const allMessages = [];
+        let lastId = null;
+        let totalFetched = 0;
         
-        // If they requested more than 100, we need to paginate
-        if (targetValue > 100) {
-          let remaining = targetValue - 100;
-          let lastId = fetchedMessages.last().id;
+        logger.info(`Fetching ${targetValue} messages...`);
+        
+        while (totalFetched < targetValue) {
+          const fetchOptions = { limit: Math.min(100, targetValue - totalFetched) };
+          if (lastId) fetchOptions.before = lastId;
           
-          while (remaining > 0 && fetchedMessages.size < targetValue) {
-            const batch = await channel.messages.fetch({ 
-              limit: Math.min(remaining, 100),
-              before: lastId
-            });
-            
-            if (batch.size === 0) break;
-            
-            fetchedMessages = new Map([...fetchedMessages, ...batch]);
-            lastId = batch.last().id;
-            remaining -= batch.size;
+          const batch = await channel.messages.fetch(fetchOptions);
+          
+          if (batch.size === 0) {
+            logger.info(`Reached end of channel history at ${totalFetched} messages`);
+            break;
+          }
+          
+          allMessages.push(...batch.values());
+          totalFetched += batch.size;
+          lastId = batch.last().id;
+          
+          logger.debug(`Fetched ${totalFetched}/${targetValue} messages`);
+          
+          // Small delay to avoid rate limits
+          if (totalFetched < targetValue) {
+            await new Promise(resolve => setTimeout(resolve, 100));
           }
         }
+        
+        fetchedMessages = new Map(allMessages.map(msg => [msg.id, msg]));
+        logger.info(`Successfully fetched ${fetchedMessages.size} messages`);
       } else if (mode === 'user') {
         // Fetch messages from a specific user (up to 50 most recent)
         const USER_MESSAGE_LIMIT = 50;

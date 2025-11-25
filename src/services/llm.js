@@ -108,7 +108,12 @@ class LLMService {
    * @returns {Promise<string>} - The summary text
    */
   async summariseMessages(messages, mode = 'default', targetUsername = null) {
-    const systemPrompt = config.summaryPrompt;
+    // Use topic-based format for large message counts (>100 messages)
+    const useTopicFormat = mode === 'count' && messages.length > 100;
+    
+    const systemPrompt = useTopicFormat 
+      ? this.getTopicBasedSystemPrompt()
+      : config.summaryPrompt;
     
     // Format messages for the LLM with reply chain information
     const formattedMessages = messages
@@ -126,12 +131,27 @@ class LLMService {
     if (mode === 'user' && targetUsername) {
       // User-specific summary: focus only on what the target user said
       userPrompt = `Messages from ${targetUsername}:\n\n${formattedMessages}\n\nProvide a neutral summary of what ${targetUsername} discussed in their 50 most recent messages. Focus ONLY on ${targetUsername}'s contributions. Only mention other users if they are directly relevant to what ${targetUsername} said (e.g., if ${targetUsername} replied to them or discussed them). The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
+    } else if (useTopicFormat) {
+      // Topic-based format for large message sets
+      userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nAnalyze the conversation and identify the main topics discussed. Format your response as:
+
+**Topic Name**
+• Key point with participants (e.g., "Alice and Bob discussed X")
+• Another key point
+  - Sub-point if needed (e.g., specific detail or reply thread)
+
+Keep it concise but comprehensive. You can exceed ${config.maxSummaryLength} characters if needed to cover all topics properly. Focus on what was discussed and who said what.`;
     } else {
       // Default summary: include everyone
       userPrompt = `Messages to summarise:\n\n${formattedMessages}\n\nProvide a neutral summary. Include who said what and note any conversation threads where users are replying to each other. The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
     }
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
+    
+    // For topic format, don't enforce character limit
+    if (useTopicFormat) {
+      return summary.trim();
+    }
     
     // Ensure summary doesn't exceed max length and doesn't end with trailing dots
     let trimmedSummary = summary.trim();
@@ -160,6 +180,14 @@ class LLMService {
     }
     
     return trimmedSummary;
+  }
+
+  /**
+   * Get system prompt for topic-based summaries
+   * @returns {string} - The system prompt
+   */
+  getTopicBasedSystemPrompt() {
+    return 'You are a Discord chat summariser. Your role is to analyze conversations and organize them by topic. Identify the main discussion topics and present them in a structured format with bullet points. Be neutral, objective, and comprehensive. Include who participated in each topic and what they said.';
   }
 }
 
