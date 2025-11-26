@@ -1,6 +1,7 @@
 import { SummaryModel } from '../database/models.js';
 import llmService from './llm.js';
 import messageCacheService from './messageCache.js';
+import embeddingService from './embedding.js';
 import logger from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
@@ -638,11 +639,36 @@ class SummariserService {
    */
   async generateTopicSummary(channel, guildId, botUserId, keyword, limit, editableMessage = null, requesterId = null) {
     try {
-      // Search for messages containing the keyword
-      let matchedMessages = messageCacheService.searchMessages(channel.id, keyword, botUserId, limit);
+      if (editableMessage) {
+        await this.updateProgress(editableMessage, `Generating related search terms for "${keyword}"...`, 0);
+      }
+
+      // Generate 15 related search terms using embeddings
+      const searchTerms = await embeddingService.generateRelatedTerms(keyword, 15);
+      logger.info(`Searching for topic "${keyword}" with terms: ${searchTerms.join(', ')}`);
+
+      // Search for messages containing any of the search terms
+      let allMatches = [];
+      const seenIds = new Set();
+
+      for (const term of searchTerms) {
+        const matches = messageCacheService.searchMessages(channel.id, term, botUserId, Math.ceil(limit / searchTerms.length));
+        for (const msg of matches) {
+          if (!seenIds.has(msg.id)) {
+            seenIds.add(msg.id);
+            allMatches.push(msg);
+          }
+        }
+      }
+
+      // Sort by timestamp
+      allMatches.sort((a, b) => a.created_at - b.created_at);
+
+      // Limit to requested amount
+      allMatches = allMatches.slice(0, limit);
       
       // Convert cached format to our format
-      matchedMessages = matchedMessages.map(msg => ({
+      let matchedMessages = allMatches.map(msg => ({
         author: msg.author_username,
         authorId: msg.author_id,
         displayName: msg.author_display_name || msg.author_username,
@@ -658,7 +684,7 @@ class SummariserService {
       if (matchedMessages.length === 0) {
         return {
           success: false,
-          error: `No messages found containing "${keyword}". Try a different keyword or check the spelling.`
+          error: `No messages found about "${keyword}". Try a different keyword or check the spelling.`
         };
       }
 
@@ -666,8 +692,8 @@ class SummariserService {
         await this.updateProgress(editableMessage, `Found ${matchedMessages.length} messages about "${keyword}"...`, 0);
       }
 
-      // Generate topic summary using LLM
-      const summaryText = await llmService.summariseTopic(matchedMessages, keyword);
+      // Generate topic summary using LLM with search context
+      const summaryText = await llmService.summariseTopic(matchedMessages, keyword, searchTerms);
 
       if (!summaryText || summaryText.trim().length === 0) {
         return {
@@ -692,7 +718,8 @@ class SummariserService {
       return {
         success: true,
         matchCount: matchedMessages.length,
-        searchedCount: limit
+        searchedCount: limit,
+        searchTerms: searchTerms
       };
     } catch (error) {
       logger.error('Error generating topic summary:', error);
@@ -713,11 +740,36 @@ class SummariserService {
    */
   async generateExplanation(channel, guildId, botUserId, topic, depth, editableMessage = null, requesterId = null) {
     try {
-      // Search for messages related to the topic
-      let matchedMessages = messageCacheService.searchMessages(channel.id, topic, botUserId, depth);
+      if (editableMessage) {
+        await this.updateProgress(editableMessage, `Generating related search terms for "${topic}"...`, 0);
+      }
+
+      // Generate 15 related search terms using embeddings
+      const searchTerms = await embeddingService.generateRelatedTerms(topic, 15);
+      logger.info(`Searching for explanation of "${topic}" with terms: ${searchTerms.join(', ')}`);
+
+      // Search for messages containing any of the search terms
+      let allMatches = [];
+      const seenIds = new Set();
+
+      for (const term of searchTerms) {
+        const matches = messageCacheService.searchMessages(channel.id, term, botUserId, Math.ceil(depth / searchTerms.length));
+        for (const msg of matches) {
+          if (!seenIds.has(msg.id)) {
+            seenIds.add(msg.id);
+            allMatches.push(msg);
+          }
+        }
+      }
+
+      // Sort by timestamp
+      allMatches.sort((a, b) => a.created_at - b.created_at);
+
+      // Limit to requested amount
+      allMatches = allMatches.slice(0, depth);
       
       // Convert cached format to our format
-      matchedMessages = matchedMessages.map(msg => ({
+      let matchedMessages = allMatches.map(msg => ({
         author: msg.author_username,
         authorId: msg.author_id,
         displayName: msg.author_display_name || msg.author_username,
@@ -738,11 +790,11 @@ class SummariserService {
       }
 
       if (editableMessage) {
-        await this.updateProgress(editableMessage, `Analyzing ${matchedMessages.length} messages to explain "${topic}"...`, 0);
+        await this.updateProgress(editableMessage, `Analysing ${matchedMessages.length} messages to explain "${topic}"...`, 0);
       }
 
-      // Generate explanation using LLM
-      const explanationText = await llmService.generateExplanation(matchedMessages, topic);
+      // Generate explanation using LLM with search context
+      const explanationText = await llmService.generateExplanation(matchedMessages, topic, searchTerms);
 
       if (!explanationText || explanationText.trim().length === 0) {
         return {
@@ -767,7 +819,8 @@ class SummariserService {
       return {
         success: true,
         matchCount: matchedMessages.length,
-        searchedCount: depth
+        searchedCount: depth,
+        searchTerms: searchTerms
       };
     } catch (error) {
       logger.error('Error generating explanation:', error);

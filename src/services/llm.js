@@ -410,8 +410,7 @@ Create a COMPREHENSIVE final summary that:
   async summariseCatchup(messages, mentionedMessages, requesterId) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a friendly Discord user catching someone up on what they missed.
-Write like you're chatting naturally - casual, conversational, no formatting. Just a normal message.`;
+    const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis. Use quotes sparingly for important statements only.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
@@ -420,24 +419,21 @@ Write like you're chatting naturally - casual, conversational, no formatting. Ju
     let mentionNote = '';
     if (mentionedMessages.length > 0) {
       const mentionAuthors = [...new Set(mentionedMessages.map(m => m.author))].join(', ');
-      mentionNote = `\n\nIMPORTANT: They were mentioned by ${mentionAuthors} - make sure to tell them about this first!`;
+      mentionNote = `\n\nNOTE: The user was mentioned by: ${mentionAuthors}. Prioritise these mentions.`;
     }
 
-    const userPrompt = `Here's what happened while they were gone (${messages.length} messages):
+    const userPrompt = `Summarise what happened in this channel while the user was away. ${messages.length} messages:
 
 ${formattedMessages}
 ${mentionNote}
 
-Catch them up casually like a friend would. Keep it short and natural - just the important stuff.
-
-Example tone: "Hey! So while you were gone, username and username2 were chatting about [topic]. username mentioned [key point]. ${mentionedMessages.length > 0 ? 'Oh and username pinged you about [thing].' : ''}"
-
 RULES:
-- Max 400 characters
-- No markdown formatting (no bold, no bullets, no headers)
-- Sound like a natural Discord message
-- Mention usernames naturally in the flow
-- If they were mentioned, lead with that`;
+- Maximum 600 characters
+- Start with any mentions of the user if applicable
+- State who discussed what, with key points
+- Include important quotes where relevant: username said "quote"
+- Be neutral and factual - no casual language
+- No markdown formatting`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(summary.trim(), userMap);
@@ -449,30 +445,35 @@ RULES:
    * @param {string} keyword - The topic keyword
    * @returns {Promise<string>} - Topic summary
    */
-  async summariseTopic(messages, keyword) {
+  async summariseTopic(messages, keyword, searchTerms = null) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a friendly Discord user explaining what's been said about a topic.
-Write like you're chatting naturally - casual, conversational, no formatting. Just a normal message.`;
+    const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis. Use quotes for important statements.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
       .join('\n');
 
-    const userPrompt = `Here are ${messages.length} messages about "${keyword}":
+    let searchContext = '';
+    if (searchTerms && searchTerms.length > 0) {
+      searchContext = `\nThe user searched for: "${keyword}"
+Related terms used to find messages: ${searchTerms.join(', ')}
+Some messages may be loosely related - focus on what is genuinely about "${keyword}".`;
+    }
+
+    const userPrompt = `Summarise discussions about "${keyword}". ${messages.length} messages found:
+${searchContext}
 
 ${formattedMessages}
 
-Explain what people have been saying about "${keyword}" casually, like you're filling someone in.
-
-Example tone: "So about ${keyword} - username was saying [point], and username2 thinks [opinion]. They ended up agreeing that [conclusion]."
-
 RULES:
-- Max 400 characters
-- No markdown formatting (no bold, no bullets, no headers)
-- Sound like a natural Discord message
-- Mention usernames naturally when attributing opinions
-- Capture the key points and any disagreements`;
+- Maximum 600 characters
+- Focus only on content genuinely related to "${keyword}"
+- State who said what with key points
+- Include important quotes: username said "quote"
+- Note any disagreements or decisions
+- Be neutral and factual
+- No markdown formatting`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(summary.trim(), userMap);
@@ -482,31 +483,37 @@ RULES:
    * Generate an explanation to help understand a topic
    * @param {Array} messages - Array of message objects about the topic
    * @param {string} topic - The topic to explain
+   * @param {Array} searchTerms - Related terms used to find messages
    * @returns {Promise<string>} - Explanation text
    */
-  async generateExplanation(messages, topic) {
+  async generateExplanation(messages, topic, searchTerms = null) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a friendly Discord user casually explaining something to someone who asked. 
-Write like you're chatting naturally - no formatting, no headers, no bullet points. Just a casual message.`;
+    const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
       .join('\n');
 
-    const userPrompt = `Someone asked about "${topic}". Here's the recent discussion:
+    let searchContext = '';
+    if (searchTerms && searchTerms.length > 0) {
+      searchContext = `\nThe user asked about: "${topic}"
+Related terms used to find messages: ${searchTerms.join(', ')}
+Some messages may be loosely related - focus on explaining "${topic}" specifically.`;
+    }
+
+    const userPrompt = `Explain what "${topic}" means based on these discussions. ${messages.length} messages:
+${searchContext}
 
 ${formattedMessages}
 
-Reply casually like a helpful Discord user catching them up. Write 2-3 sentences max, mention who said what naturally.
-
-Example tone: "Oh yeah, username was talking about that earlier - basically [quick summary]. username mentioned [detail] too."
-
 RULES:
-- Max 300 characters
-- No markdown formatting (no bold, no bullets, no headers)
-- Sound like a natural Discord message
-- Reference usernames naturally in the flow`;
+- Maximum 500 characters
+- Explain what "${topic}" is and the key points discussed
+- Attribute viewpoints to usernames
+- Include a key quote if relevant
+- Be neutral and factual
+- No markdown formatting`;
 
     const explanation = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(explanation.trim(), userMap);
