@@ -178,6 +178,61 @@ class MessageCacheService {
       this.maintenanceInterval = null;
     }
   }
+
+  /**
+   * Get the last message from a specific user in a channel
+   * @param {string} channelId - Discord channel ID
+   * @param {string} userId - User ID to find
+   * @returns {Object|null} - Last message object or null
+   */
+  getLastUserMessage(channelId, userId) {
+    if (!this.isEnabled()) return null;
+    
+    try {
+      return MessageCacheModel.getLastUserMessage(channelId, userId);
+    } catch (error) {
+      logger.warn(`Failed to get last user message: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get messages since a timestamp
+   * @param {string} channelId - Discord channel ID
+   * @param {number} sinceTimestamp - Unix timestamp
+   * @param {string} botUserId - Bot's user ID to exclude
+   * @param {number} limit - Max messages to return
+   * @returns {Array} - Array of cached message objects
+   */
+  getMessagesSince(channelId, sinceTimestamp, botUserId, limit = 5000) {
+    if (!this.isEnabled()) return [];
+    
+    try {
+      return MessageCacheModel.getMessagesSince(channelId, sinceTimestamp, botUserId, limit);
+    } catch (error) {
+      logger.warn(`Failed to get messages since timestamp: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Search messages containing a keyword
+   * @param {string} channelId - Discord channel ID
+   * @param {string} keyword - Keyword to search for
+   * @param {string} botUserId - Bot's user ID to exclude
+   * @param {number} limit - Max messages to return
+   * @returns {Array} - Array of cached message objects
+   */
+  searchMessages(channelId, keyword, botUserId, limit = 1000) {
+    if (!this.isEnabled()) return [];
+    
+    try {
+      return MessageCacheModel.searchMessages(channelId, keyword, botUserId, limit);
+    } catch (error) {
+      logger.warn(`Failed to search messages: ${error.message}`);
+      return [];
+    }
+  }
 }
 
 export default new MessageCacheService();

@@ -388,6 +388,146 @@ Create a COMPREHENSIVE final summary that:
     
     return summary.trim();
   }
+
+  /**
+   * Generate a catchup summary for messages since user was away
+   * @param {Array} messages - Array of message objects
+   * @param {Array} mentionedMessages - Messages that mention the requester
+   * @param {string} requesterId - User ID who requested catchup
+   * @returns {Promise<string>} - Catchup summary
+   */
+  async summariseCatchup(messages, mentionedMessages, requesterId) {
+    const userMap = this.buildUserMap(messages);
+    
+    const systemPrompt = `You are a helpful Discord assistant helping someone catch up on what they missed.
+Your goal is to help them quickly understand what happened while they were away.
+
+CRITICAL REQUIREMENTS:
+- ALWAYS include usernames when describing who said what
+- Include direct quotes for important/notable statements
+- Highlight any decisions, announcements, or action items
+- Group by topic for easy scanning
+- Be specific about what each person said - don't generalize
+- If there were any debates or disagreements, present both sides fairly`;
+
+    const formattedMessages = messages
+      .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+      .join('\n');
+
+    let mentionSection = '';
+    if (mentionedMessages.length > 0) {
+      const formattedMentions = mentionedMessages
+        .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+        .join('\n');
+      mentionSection = `\n\n**IMPORTANT - You were mentioned in these messages:**\n${formattedMentions}`;
+    }
+
+    const userPrompt = `Here are the messages since you were last active (${messages.length} total):
+
+${formattedMessages}
+${mentionSection}
+
+Create a catchup summary that:
+1. Starts with "**While you were away...**"
+2. ${mentionedMessages.length > 0 ? `First highlights the ${mentionedMessages.length} message(s) where you were mentioned` : 'Notes if anything requires your attention'}
+3. Groups discussions by **Topic** headers
+4. Under each topic, summarizes WHO said WHAT with specific details
+5. Includes notable quotes: username said "quote"
+6. Ends with any pending decisions or action items if applicable
+
+Keep it informative but scannable - use bullet points and clear formatting.`;
+
+    const summary = await this.generateCompletion(systemPrompt, userPrompt);
+    return this.replaceUsernamesWithMentions(summary.trim(), userMap);
+  }
+
+  /**
+   * Generate a topic-focused summary
+   * @param {Array} messages - Array of message objects about the topic
+   * @param {string} keyword - The topic keyword
+   * @returns {Promise<string>} - Topic summary
+   */
+  async summariseTopic(messages, keyword) {
+    const userMap = this.buildUserMap(messages);
+    
+    const systemPrompt = `You are a Discord assistant summarizing discussions about a specific topic.
+Your goal is to help someone understand everything that was discussed about "${keyword}".
+
+CRITICAL REQUIREMENTS:
+- ALWAYS include usernames when describing who said what
+- Present different people's viewpoints and opinions clearly
+- Include direct quotes for key statements
+- Note any agreements, disagreements, or decisions
+- Be neutral and present all perspectives fairly
+- Group related discussions together chronologically`;
+
+    const formattedMessages = messages
+      .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+      .join('\n');
+
+    const userPrompt = `Here are ${messages.length} messages about "${keyword}":
+
+${formattedMessages}
+
+Create a comprehensive summary about "${keyword}" that:
+1. Starts with "**Discussions about ${keyword}:**"
+2. Summarizes the main points discussed
+3. Clearly attributes WHO said WHAT - every viewpoint should have a username
+4. Includes direct quotes for key statements: username said "quote"
+5. Notes different opinions or perspectives if people disagreed
+6. Highlights any decisions or conclusions reached
+7. Is organized chronologically or by sub-topic
+
+The reader should understand the full conversation about "${keyword}" including who contributed what.`;
+
+    const summary = await this.generateCompletion(systemPrompt, userPrompt);
+    return this.replaceUsernamesWithMentions(summary.trim(), userMap);
+  }
+
+  /**
+   * Generate an explanation to help understand a topic
+   * @param {Array} messages - Array of message objects about the topic
+   * @param {string} topic - The topic to explain
+   * @returns {Promise<string>} - Explanation text
+   */
+  async generateExplanation(messages, topic) {
+    const userMap = this.buildUserMap(messages);
+    
+    const systemPrompt = `You are a helpful assistant explaining a topic to someone who is confused or lost.
+Your goal is to help them understand what "${topic}" is about based on the Discord discussions.
+
+CRITICAL REQUIREMENTS:
+- Explain like you're helping a newcomer understand
+- Start with the basics - what is this about?
+- Include who the key people involved are and their roles/views
+- Quote specific people to show different perspectives
+- Build understanding progressively
+- Be clear about what's fact vs opinion
+- Note any context that helps understand the discussion`;
+
+    const formattedMessages = messages
+      .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+      .join('\n');
+
+    const userPrompt = `Someone needs help understanding "${topic}". Here are ${messages.length} relevant messages:
+
+${formattedMessages}
+
+Create an explanation that:
+1. Starts with "**Understanding ${topic}:**"
+2. Begins with a brief "What is this about?" section explaining the basics
+3. Identifies the key people involved and what their perspectives are
+4. Explains the main points of discussion with clear attribution
+5. Uses direct quotes to illustrate key viewpoints: username explained "quote"
+6. Notes any background context that helps understand
+7. Summarizes the current state/conclusion if applicable
+8. Ends with "Key takeaways:" bullet points
+
+Write this as if explaining to someone who just joined and is confused about what "${topic}" means in this context.`;
+
+    const explanation = await this.generateCompletion(systemPrompt, userPrompt);
+    return this.replaceUsernamesWithMentions(explanation.trim(), userMap);
+  }
 }
 
 export default new LLMService();

@@ -310,12 +310,13 @@ class SummariserService {
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
    * @param {string} botUserId - Bot's user ID to filter out bot messages
-   * @param {string} mode - 'default', 'count', or 'user'
-   * @param {any} targetValue - Message count or user ID depending on mode
+   * @param {string} mode - 'default', 'count', 'user', 'topic', 'catchup', or 'explain'
+   * @param {any} targetValue - Message count, user ID, or topic keyword depending on mode
    * @param {Object} editableMessage - Optional message to edit instead of sending new one
+   * @param {string} requesterId - User ID of who requested the summary (for @mention notification)
    * @returns {Promise<Object>} - Summary result with message and metadata
    */
-  async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null, editableMessage = null) {
+  async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null, editableMessage = null, requesterId = null) {
     try {
       // Fetch messages - pass editable message for progress updates
       const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode, targetValue, editableMessage);
@@ -437,6 +438,11 @@ class SummariserService {
         SummaryModel.createSummary(guildId, channel.id, sentMessage.id, timestamp);
       }
 
+      // Send @mention notification to the requester
+      if (requesterId) {
+        await channel.send(`<@${requesterId}> Here is your summary!`);
+      }
+
       return {
         success: true,
         message: sentMessage,
@@ -539,6 +545,228 @@ class SummariserService {
       return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
     } else {
       return 'less than a minute ago';
+    }
+  }
+
+  /**
+   * Generate a catchup summary for messages since a user was last active
+   * @param {Object} channel - Discord channel object
+   * @param {string} guildId - Discord guild ID
+   * @param {string} botUserId - Bot's user ID to filter out
+   * @param {string} requesterId - User ID who requested the catchup
+   * @param {number} sinceTimestamp - Unix timestamp to fetch messages since
+   * @param {Object} editableMessage - Optional message to update with progress
+   * @returns {Promise<Object>} - Summary result
+   */
+  async generateCatchupSummary(channel, guildId, botUserId, requesterId, sinceTimestamp, editableMessage = null) {
+    try {
+      // Get messages from cache since the timestamp
+      let messages = messageCacheService.getMessagesSince(channel.id, sinceTimestamp, botUserId, 5000);
+      
+      // Convert cached format to our format
+      messages = messages.map(msg => ({
+        author: msg.author_username,
+        authorId: msg.author_id,
+        content: msg.content || '[attachment/embed]',
+        timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        referencedMessageId: msg.reference_id || null,
+        referencedAuthor: null
+      }));
+
+      if (messages.length === 0) {
+        return {
+          success: false,
+          error: 'No messages found since you were last active. The channel has been quiet!'
+        };
+      }
+
+      if (editableMessage) {
+        await this.updateProgress(editableMessage, `Found ${messages.length} messages to catch you up on...`, 0);
+      }
+
+      // Check for messages that mention the requester
+      const mentionPattern = new RegExp(`<@!?${requesterId}>`, 'g');
+      const mentionedMessages = messages.filter(msg => mentionPattern.test(msg.content));
+
+      // Generate catchup summary using LLM
+      const summaryText = await llmService.summariseCatchup(messages, mentionedMessages, requesterId);
+
+      if (!summaryText || summaryText.trim().length === 0) {
+        return {
+          success: false,
+          error: 'Failed to generate catchup summary. Please try again.'
+        };
+      }
+
+      // Split and send the summary
+      const summaryChunks = this.splitIntoChunks(summaryText, 2000);
+      const validChunks = summaryChunks.filter(chunk => chunk && chunk.trim().length > 0);
+
+      for (const chunk of validChunks) {
+        await channel.send(chunk);
+      }
+
+      // Send notification
+      await channel.send(`<@${requesterId}> Here's your catchup!`);
+
+      return {
+        success: true,
+        messageCount: messages.length
+      };
+    } catch (error) {
+      logger.error('Error generating catchup summary:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate a topic-focused summary searching for a specific keyword
+   * @param {Object} channel - Discord channel object
+   * @param {string} guildId - Discord guild ID
+   * @param {string} botUserId - Bot's user ID to filter out
+   * @param {string} keyword - Topic/keyword to search for
+   * @param {number} limit - Max messages to search
+   * @param {Object} editableMessage - Optional message to update with progress
+   * @param {string} requesterId - User ID who requested the summary
+   * @returns {Promise<Object>} - Summary result
+   */
+  async generateTopicSummary(channel, guildId, botUserId, keyword, limit, editableMessage = null, requesterId = null) {
+    try {
+      // Search for messages containing the keyword
+      let matchedMessages = messageCacheService.searchMessages(channel.id, keyword, botUserId, limit);
+      
+      // Convert cached format to our format
+      matchedMessages = matchedMessages.map(msg => ({
+        author: msg.author_username,
+        authorId: msg.author_id,
+        content: msg.content || '[attachment/embed]',
+        timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        referencedMessageId: msg.reference_id || null,
+        referencedAuthor: null
+      }));
+
+      if (matchedMessages.length === 0) {
+        return {
+          success: false,
+          error: `No messages found containing "${keyword}". Try a different keyword or check the spelling.`
+        };
+      }
+
+      if (editableMessage) {
+        await this.updateProgress(editableMessage, `Found ${matchedMessages.length} messages about "${keyword}"...`, 0);
+      }
+
+      // Generate topic summary using LLM
+      const summaryText = await llmService.summariseTopic(matchedMessages, keyword);
+
+      if (!summaryText || summaryText.trim().length === 0) {
+        return {
+          success: false,
+          error: 'Failed to generate topic summary. Please try again.'
+        };
+      }
+
+      // Split and send the summary
+      const summaryChunks = this.splitIntoChunks(summaryText, 2000);
+      const validChunks = summaryChunks.filter(chunk => chunk && chunk.trim().length > 0);
+
+      for (const chunk of validChunks) {
+        await channel.send(chunk);
+      }
+
+      // Send notification
+      if (requesterId) {
+        await channel.send(`<@${requesterId}> Here's your topic summary for "${keyword}"!`);
+      }
+
+      return {
+        success: true,
+        matchCount: matchedMessages.length,
+        searchedCount: limit
+      };
+    } catch (error) {
+      logger.error('Error generating topic summary:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate an explanation to help understand a topic
+   * @param {Object} channel - Discord channel object
+   * @param {string} guildId - Discord guild ID
+   * @param {string} botUserId - Bot's user ID to filter out
+   * @param {string} topic - Topic to explain
+   * @param {number} depth - How many messages to search
+   * @param {Object} editableMessage - Optional message to update with progress
+   * @param {string} requesterId - User ID who requested the explanation
+   * @returns {Promise<Object>} - Summary result
+   */
+  async generateExplanation(channel, guildId, botUserId, topic, depth, editableMessage = null, requesterId = null) {
+    try {
+      // Search for messages related to the topic
+      let matchedMessages = messageCacheService.searchMessages(channel.id, topic, botUserId, depth);
+      
+      // Convert cached format to our format
+      matchedMessages = matchedMessages.map(msg => ({
+        author: msg.author_username,
+        authorId: msg.author_id,
+        content: msg.content || '[attachment/embed]',
+        timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        referencedMessageId: msg.reference_id || null,
+        referencedAuthor: null
+      }));
+
+      if (matchedMessages.length === 0) {
+        return {
+          success: false,
+          error: `No discussions found about "${topic}". Try different keywords or broaden your search.`
+        };
+      }
+
+      if (editableMessage) {
+        await this.updateProgress(editableMessage, `Analyzing ${matchedMessages.length} messages to explain "${topic}"...`, 0);
+      }
+
+      // Generate explanation using LLM
+      const explanationText = await llmService.generateExplanation(matchedMessages, topic);
+
+      if (!explanationText || explanationText.trim().length === 0) {
+        return {
+          success: false,
+          error: 'Failed to generate explanation. Please try again.'
+        };
+      }
+
+      // Split and send the explanation
+      const chunks = this.splitIntoChunks(explanationText, 2000);
+      const validChunks = chunks.filter(chunk => chunk && chunk.trim().length > 0);
+
+      for (const chunk of validChunks) {
+        await channel.send(chunk);
+      }
+
+      // Send notification
+      if (requesterId) {
+        await channel.send(`<@${requesterId}> Here's your explanation of "${topic}"!`);
+      }
+
+      return {
+        success: true,
+        matchCount: matchedMessages.length,
+        searchedCount: depth
+      };
+    } catch (error) {
+      logger.error('Error generating explanation:', error);
+      throw error;
     }
   }
 }

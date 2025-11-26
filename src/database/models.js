@@ -288,5 +288,57 @@ export const MessageCacheModel = {
       )
     `);
     return stmt.run(toDelete);
+  },
+
+  /**
+   * Get the last message from a specific user in a channel
+   * @param {string} channelId - Discord channel ID
+   * @param {string} userId - User ID
+   * @returns {Object|null} - Last message or null
+   */
+  getLastUserMessage(channelId, userId) {
+    const stmt = db.prepare(`
+      SELECT * FROM cached_messages 
+      WHERE channel_id = ? AND author_id = ? AND deleted = 0
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    return stmt.get(channelId, userId);
+  },
+
+  /**
+   * Get messages since a specific timestamp
+   * @param {string} channelId - Discord channel ID
+   * @param {number} sinceTimestamp - Unix timestamp
+   * @param {string} botUserId - Bot's user ID to exclude
+   * @param {number} limit - Max messages to return
+   * @returns {Array} - Array of cached message objects
+   */
+  getMessagesSince(channelId, sinceTimestamp, botUserId, limit) {
+    const stmt = db.prepare(`
+      SELECT * FROM cached_messages 
+      WHERE channel_id = ? AND created_at > ? AND deleted = 0 AND author_id != ?
+      ORDER BY created_at ASC
+      LIMIT ?
+    `);
+    return stmt.all(channelId, sinceTimestamp, botUserId, limit);
+  },
+
+  /**
+   * Search messages containing a keyword (case-insensitive)
+   * @param {string} channelId - Discord channel ID
+   * @param {string} keyword - Keyword to search for
+   * @param {string} botUserId - Bot's user ID to exclude
+   * @param {number} limit - Max messages to return
+   * @returns {Array} - Array of cached message objects
+   */
+  searchMessages(channelId, keyword, botUserId, limit) {
+    const stmt = db.prepare(`
+      SELECT * FROM cached_messages 
+      WHERE channel_id = ? AND content LIKE ? AND deleted = 0 AND author_id != ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(channelId, `%${keyword}%`, botUserId, limit);
   }
 };

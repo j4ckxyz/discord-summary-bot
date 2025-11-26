@@ -126,7 +126,8 @@ export default {
           interaction.client.user.id,
           summaryMode,
           targetValue,
-          interaction  // Pass interaction so we can update the deferred reply with progress
+          interaction,  // Pass interaction so we can update the deferred reply with progress
+          userId  // Pass requester ID for @mention notification
         );
 
         // Release the slot

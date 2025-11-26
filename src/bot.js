@@ -2,6 +2,9 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import logger from './utils/logger.js';
 import summariseCommand from './commands/summarise.js';
+import catchupCommand from './commands/catchup.js';
+import topicCommand from './commands/topic.js';
+import explainCommand from './commands/explain.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
 import messageCacheService from './services/messageCache.js';
@@ -29,7 +32,7 @@ const client = new Client({
 });
 
 // Commands collection
-const commands = [summariseCommand];
+const commands = [summariseCommand, catchupCommand, topicCommand, explainCommand];
 
 // Register slash commands
 async function registerCommands() {
@@ -189,7 +192,8 @@ async function handleTextCommand(message) {
         client.user.id,
         summaryMode,
         targetValue,
-        thinkingMsg
+        thinkingMsg,
+        userId  // Pass requester ID for @mention notification
       );
 
       // Release the slot
