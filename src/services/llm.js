@@ -216,10 +216,16 @@ Example format:
    * @returns {Promise<string>} - Chunk summary
    */
   async summariseChunk(messages, chunkIndex, totalChunks, startTime, endTime) {
-    const systemPrompt = `You are a Discord chat summariser. You are summarizing chunk ${chunkIndex} of ${totalChunks} of a large conversation.
-Your goal is to extract the KEY topics and discussions from this chunk. Be concise but comprehensive.
-Focus on: main topics discussed, who participated, any decisions made, and notable events.
-Output should be organized by topic with bullet points. Keep each topic section brief (2-4 bullet points max).`;
+    const systemPrompt = `You are a Discord chat summariser creating a detailed summary of chunk ${chunkIndex} of ${totalChunks}.
+
+CRITICAL REQUIREMENTS:
+- ALWAYS include usernames when describing who said what
+- Include notable/funny/important DIRECT QUOTES with attribution (e.g., username said "exact quote")
+- Preserve specific details, numbers, links, and decisions
+- Don't generalize - be specific about what each person contributed
+- Group by topic but maintain detail within each topic
+
+Your summary will be combined with other chunk summaries, so preserve all important information.`;
 
     // Format messages for the LLM
     const formattedMessages = messages
@@ -237,7 +243,13 @@ Messages in this chunk: ${messages.length}
 
 ${formattedMessages}
 
-Summarize the key topics and discussions in this chunk. Use topic headers with bullet points. Be concise.`;
+Create a DETAILED summary of this chunk. Requirements:
+1. Use **Topic Headers** for each distinct discussion
+2. Under each topic, use bullet points with USERNAME attribution
+3. Include direct quotes for memorable/important statements: username said "quote"
+4. Capture decisions, links shared, questions asked, and answers given
+5. Don't lose information - this will be merged with other summaries later
+6. Be comprehensive - aim for 1500-3000 characters`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     logger.debug(`Chunk ${chunkIndex} summary: ${summary.length} characters`);
@@ -252,14 +264,15 @@ Summarize the key topics and discussions in this chunk. Use topic headers with b
    * @returns {Promise<string>} - Final combined summary
    */
   async combineSummaries(chunkSummaries, totalMessages) {
-    const systemPrompt = `You are a Discord chat summariser. You are combining ${chunkSummaries.length} partial summaries into one cohesive final summary.
-Your goal is to:
-1. Merge related topics that appear across chunks
-2. Identify the main themes of the conversation
-3. Provide a comprehensive but concise overview
-4. Organize by topic, not by time/chunk
+    const systemPrompt = `You are a Discord chat summariser combining ${chunkSummaries.length} detailed chunk summaries into one comprehensive final summary.
 
-Format your response with topic headers in bold and bullet points underneath. Keep it organized and easy to read.`;
+CRITICAL REQUIREMENTS:
+- PRESERVE all usernames - never remove attribution
+- KEEP important direct quotes with attribution
+- Merge related topics across chunks but retain all significant details
+- Don't dilute or over-generalize - specific details matter
+- The final summary should be comprehensive and informative
+- Organize by topic, with the most active/important topics first`;
 
     const summariesText = chunkSummaries.map(chunk => 
       `=== Chunk ${chunk.index} (${chunk.startTime} - ${chunk.endTime}, ${chunk.messageCount} messages) ===\n${chunk.summary}`
@@ -272,7 +285,14 @@ Partial summaries to combine:
 
 ${summariesText}
 
-Create a cohesive final summary that merges related topics and provides a complete overview. Use topic headers with bullet points.`;
+Create a COMPREHENSIVE final summary that:
+1. Groups related topics with **Bold Headers**
+2. Preserves WHO said WHAT (always include usernames)
+3. Keeps notable quotes with attribution
+4. Includes all important details, decisions, and discussions
+5. Orders topics by importance/activity level
+6. Does NOT lose information from the chunk summaries
+7. Can be long if needed - quality over brevity`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     logger.debug(`Final combined summary: ${summary.length} characters`);

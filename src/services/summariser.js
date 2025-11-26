@@ -5,7 +5,7 @@ import logger from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
 // Configuration for large message handling
-const CHUNK_SIZE = 500; // Messages per chunk for hierarchical summarization
+const CHUNK_SIZE = 2500; // Messages per chunk for hierarchical summarization
 const RATE_LIMIT_DELAY = 250; // ms between Discord API calls to avoid rate limits
 
 class SummariserService {
