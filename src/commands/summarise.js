@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import rateLimitService from '../services/ratelimit.js';
 import summariserService from '../services/summariser.js';
+import requestQueueService from '../services/requestQueue.js';
 import logger from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
@@ -103,40 +104,63 @@ export default {
       // Defer reply as this might take a while
       await interaction.deferReply();
 
-      // Generate and post summary - pass interaction for progress updates
-      const result = await summariserService.generateAndPostSummary(
-        channel, 
-        guildId, 
-        interaction.client.user.id,
-        summaryMode,
-        targetValue,
-        interaction  // Pass interaction so we can update the deferred reply with progress
-      );
-
-      if (!result.success) {
-        await interaction.editReply(result.error);
-        return;
+      // Request a slot in the queue
+      const slot = await requestQueueService.requestSlot(channelId, userId);
+      
+      if (slot.queued) {
+        // Notify user they're in the queue
+        await interaction.editReply(`Your request is queued, position ${slot.position}. Please wait...`);
+        
+        // Wait for our turn
+        await requestQueueService.waitForSlot(slot.requestId);
+        
+        // Update message now that we're starting
+        await interaction.editReply('Starting summary... fetching messages...');
       }
 
-      // Update cooldown
-      rateLimitService.updateCooldown(userId, guildId, channelId);
+      try {
+        // Generate and post summary - pass interaction for progress updates
+        const result = await summariserService.generateAndPostSummary(
+          channel, 
+          guildId, 
+          interaction.client.user.id,
+          summaryMode,
+          targetValue,
+          interaction  // Pass interaction so we can update the deferred reply with progress
+        );
 
-      // Confirm to user (ephemeral)
-      let confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''}.`;
-      
-      if (summaryMode === 'user') {
-        confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''} from the specified user.`;
-      } else if (summaryMode === 'count') {
-        confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''} from the last ${targetValue} messages.`;
+        // Release the slot
+        requestQueueService.releaseSlot(slot.requestId);
+
+        if (!result.success) {
+          await interaction.editReply(result.error);
+          return;
+        }
+
+        // Update cooldown
+        rateLimitService.updateCooldown(userId, guildId, channelId);
+
+        // Confirm to user (ephemeral)
+        let confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''}.`;
+        
+        if (summaryMode === 'user') {
+          confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''} from the specified user.`;
+        } else if (summaryMode === 'count') {
+          confirmMessage = `Summary generated! Summarised ${result.messageCount} message${result.messageCount !== 1 ? 's' : ''} from the last ${targetValue} messages.`;
+        }
+        
+        confirmMessage += ` You have ${rateLimitCheck.remainingUses - 1} summaries remaining in the next 30 minutes.`;
+
+        await interaction.editReply({
+          content: confirmMessage
+        });
+
+        logger.info(`Summary created by ${interaction.user.tag} in ${interaction.guild.name}/#${channel.name} (mode: ${summaryMode})`);
+      } catch (summaryError) {
+        // Release the slot on error
+        requestQueueService.releaseSlot(slot.requestId);
+        throw summaryError;
       }
-      
-      confirmMessage += ` You have ${rateLimitCheck.remainingUses - 1} summaries remaining in the next 30 minutes.`;
-
-      await interaction.editReply({
-        content: confirmMessage
-      });
-
-      logger.info(`Summary created by ${interaction.user.tag} in ${interaction.guild.name}/#${channel.name} (mode: ${summaryMode})`);
 
     } catch (error) {
       logger.error('Error executing summarise command:', error);

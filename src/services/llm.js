@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { config } from '../utils/config.js';
 import logger from '../utils/logger.js';
 
@@ -27,17 +27,50 @@ class LLMService {
    */
   async generateGeminiCompletion(systemPrompt, userPrompt) {
     try {
+      // Configure safety settings to be permissive for chat summarization
+      // Discord chats may contain mature language that shouldn't block summarization
+      const safetySettings = [
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+      ];
+
       const model = this.geminiClient.getGenerativeModel({ 
         model: this.model,
-        systemInstruction: systemPrompt
+        systemInstruction: systemPrompt,
+        safetySettings
       });
 
       const result = await model.generateContent(userPrompt);
       const response = await result.response;
+      
+      // Check if the response was blocked
+      if (!response.text) {
+        const blockReason = response.promptFeedback?.blockReason;
+        if (blockReason) {
+          logger.warn(`Gemini blocked response: ${blockReason}`);
+          throw new Error(`Content blocked: ${blockReason}`);
+        }
+        throw new Error('Empty response from Gemini');
+      }
+      
       return response.text();
     } catch (error) {
       logger.error('Gemini API error:', error.message);
-      throw new Error('Failed to generate summary from Gemini');
+      throw new Error(`Failed to generate summary from Gemini: ${error.message}`);
     }
   }
 

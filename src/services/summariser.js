@@ -393,7 +393,14 @@ class SummariserService {
       
       // If we have an editable message (from prefix/mention command), edit it with first chunk
       if (editableMessage) {
-        sentMessage = await editableMessage.edit(validChunks[0]);
+        // Check if this is an interaction (has editReply) or a message (has edit)
+        if (editableMessage.editReply) {
+          await editableMessage.editReply(validChunks[0]);
+          // For interactions, we need to fetch the reply to get the message object
+          sentMessage = await editableMessage.fetchReply();
+        } else {
+          sentMessage = await editableMessage.edit(validChunks[0]);
+        }
         
         // Send remaining chunks as new messages
         for (let i = 1; i < validChunks.length; i++) {

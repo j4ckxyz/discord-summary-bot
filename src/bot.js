@@ -5,6 +5,7 @@ import summariseCommand from './commands/summarise.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
 import messageCacheService from './services/messageCache.js';
+import requestQueueService from './services/requestQueue.js';
 import { config } from './utils/config.js';
 
 // Validate environment variables
@@ -166,6 +167,20 @@ async function handleTextCommand(message) {
 
     logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
 
+    // Request a slot in the queue
+    const slot = await requestQueueService.requestSlot(channelId, userId);
+    
+    if (slot.queued) {
+      // Notify user they're in the queue
+      await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
+      
+      // Wait for our turn
+      await requestQueueService.waitForSlot(slot.requestId);
+      
+      // Update message now that we're starting
+      await thinkingMsg.edit('Starting summary... fetching messages...');
+    }
+
     try {
       // Generate and post summary - pass the thinking message to edit it
       const result = await summariserService.generateAndPostSummary(
@@ -177,6 +192,9 @@ async function handleTextCommand(message) {
         thinkingMsg
       );
 
+      // Release the slot
+      requestQueueService.releaseSlot(slot.requestId);
+
       if (!result.success) {
         await thinkingMsg.edit(result.error);
         return;
@@ -187,6 +205,8 @@ async function handleTextCommand(message) {
 
       logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
     } catch (summaryError) {
+      // Release the slot on error
+      requestQueueService.releaseSlot(slot.requestId);
       logger.error('Error generating summary:', summaryError);
       try {
         await thinkingMsg.edit('An error occurred while generating the summary. Please try again with a smaller message count.');
