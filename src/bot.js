@@ -64,10 +64,14 @@ async function handleTextCommand(message) {
   // Ignore @everyone and @here
   if (message.mentions.everyone) return;
 
+  const content = message.content.trim();
   const isMention = message.mentions.has(client.user);
-  const isPrefix = message.content.startsWith('!summary');
-
-  if (!isMention && !isPrefix) return;
+  
+  // Check for prefix commands
+  const prefixCommands = ['!summary', '!catchup', '!topic', '!explain'];
+  const matchedPrefix = prefixCommands.find(p => content.toLowerCase().startsWith(p));
+  
+  if (!isMention && !matchedPrefix) return;
 
   // Ignore replies to the bot
   if (message.reference) {
@@ -75,7 +79,6 @@ async function handleTextCommand(message) {
       const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
       if (referencedMessage.author.id === client.user.id) return;
     } catch (error) {
-      // If we can't fetch the message, just proceed
       logger.warn(`Could not fetch referenced message for reply check: ${error.message}`);
     }
   }
@@ -85,64 +88,100 @@ async function handleTextCommand(message) {
   const channelId = message.channel.id;
   const channel = message.channel;
 
-  // Parse target input from message content
-  let targetInput = null;
-  if (isPrefix) {
-    const parts = message.content.split(/\s+/);
-    if (parts.length > 1) {
-      targetInput = parts[1];
-    }
+  // Parse the command and arguments
+  let command = 'summary'; // default
+  let args = [];
+  
+  if (matchedPrefix) {
+    const parts = content.split(/\s+/);
+    command = parts[0].substring(1).toLowerCase(); // Remove ! prefix
+    args = parts.slice(1);
   } else if (isMention) {
-    // For mentions, get everything after the mention
-    const parts = message.content.split(/\s+/);
-    if (parts.length > 1) {
-      targetInput = parts[1];
+    // For mentions, parse: @bot command args
+    const parts = content.split(/\s+/).filter(p => !p.match(/^<@!?\d+>$/));
+    if (parts.length > 0) {
+      const firstWord = parts[0].toLowerCase();
+      if (['summary', 'catchup', 'topic', 'explain', 'help'].includes(firstWord)) {
+        command = firstWord;
+        args = parts.slice(1);
+      } else {
+        // Treat as summary with args
+        args = parts;
+      }
     }
   }
 
   // Check for help command
-  if (targetInput && targetInput.toLowerCase() === 'help') {
+  if (command === 'help' || (args.length > 0 && args[0].toLowerCase() === 'help')) {
     const helpMessage = `**Discord Summary Bot - Help**
 
-**Basic Usage:**
-\`!summary\` or \`/summary\` - Summarise messages since last summary (min ${config.minMessagesForSummary} messages)
-\`@${client.user.username} help\` - Show this help message
-
-**Advanced Options:**
+**Summary Commands:**
+\`!summary\` or \`/summary\` - Summarise messages since last summary
 \`!summary 500\` - Summarise the last 500 messages
-\`!summary 50000\` - Summarise the last 50,000 messages (up to 100k supported)
-\`!summary @user\` - Summarise a user's 50 most recent messages
-\`!summary <userID>\` - Same as above, using Discord user ID
+\`!summary @user\` - Summarise a user's recent messages
+
+**Catchup Commands:**
+\`!catchup\` or \`/catchup\` - See what you missed (auto-detects your absence)
+\`!catchup 24h\` - Catchup on the last 24 hours (options: 1h, 6h, 12h, 24h, 48h, 7d)
+
+**Topic Commands:**
+\`!topic <keyword>\` or \`/topic\` - Search and summarize discussions about a topic
+\`!topic docker\` - Find all discussions about "docker"
+
+**Explain Commands:**
+\`!explain <topic>\` or \`/explain\` - Get help understanding a topic
+\`!explain the migration\` - Explains what "the migration" is about
 
 **Rate Limits:**
-• ${config.maxUsesPerWindow} summaries per ${config.cooldownMinutes} minutes per channel
-• Summaries are capped at ${config.maxSummaryLength} characters (for small requests)
-
-**Tips:**
-• User summaries focus only on that user's messages
-• All summaries are neutral and objective
-• Large message counts use hierarchical summarization for efficiency`;
+• ${config.maxUsesPerWindow} requests per ${config.cooldownMinutes} minutes per channel`;
 
     await message.reply(helpMessage);
     return;
   }
 
-  // Parse the target input to determine if it's a message count or user ID
+  // Check rate limit
+  const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
+  
+  if (!rateLimitCheck.allowed) {
+    const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
+    await message.reply(`You've reached your limit. Please wait ${timeRemaining} before requesting again.`);
+    return;
+  }
+
+  // Handle different commands
+  try {
+    if (command === 'catchup') {
+      await handleCatchupCommand(message, channel, guildId, userId, channelId, args);
+    } else if (command === 'topic') {
+      await handleTopicCommand(message, channel, guildId, userId, channelId, args);
+    } else if (command === 'explain') {
+      await handleExplainCommand(message, channel, guildId, userId, channelId, args);
+    } else {
+      await handleSummaryCommand(message, channel, guildId, userId, channelId, args, isMention);
+    }
+    
+    // Update cooldown after successful command
+    rateLimitService.updateCooldown(userId, guildId, channelId);
+  } catch (error) {
+    logger.error('Error handling text command:', error);
+    await message.reply('An error occurred. Please try again later.');
+  }
+}
+
+// Handle !summary command
+async function handleSummaryCommand(message, channel, guildId, userId, channelId, args, isMention) {
   let summaryMode = 'default';
   let targetValue = null;
+  const targetInput = args[0];
   
   if (targetInput) {
     const numericValue = parseInt(targetInput, 10);
     
-    // Discord user IDs are 17-19 digits (snowflakes)
-    // Message counts can be up to 100k
     if (!isNaN(numericValue)) {
       if (targetInput.length >= 17 && numericValue > 100000) {
-        // Likely a user ID (Discord snowflake) - 17+ digits
         summaryMode = 'user';
         targetValue = targetInput;
       } else {
-        // Message count - cap at 100k
         summaryMode = 'count';
         targetValue = Math.min(Math.max(numericValue, 1), 100000);
       }
@@ -155,73 +194,168 @@ async function handleTextCommand(message) {
     }
   }
 
+  const thinkingMsg = await message.reply('Starting summary... fetching messages...');
+  logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
+
+  const slot = await requestQueueService.requestSlot(channelId, userId);
+  
+  if (slot.queued) {
+    await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
+    await requestQueueService.waitForSlot(slot.requestId);
+    await thinkingMsg.edit('Starting summary... fetching messages...');
+  }
+
   try {
-    // Check rate limit
-    const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
-    
-    if (!rateLimitCheck.allowed) {
-      const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
-      await message.reply(`You've reached your limit of summaries. Please wait ${timeRemaining} before requesting another summary.`);
+    const result = await summariserService.generateAndPostSummary(
+      channel, guildId, client.user.id, summaryMode, targetValue, thinkingMsg, userId
+    );
+
+    requestQueueService.releaseSlot(slot.requestId);
+
+    if (!result.success) {
+      await thinkingMsg.edit(result.error);
       return;
     }
 
-    // Send thinking message
-    const thinkingMsg = await message.reply('Starting summary... fetching messages...');
-
-    logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
-
-    // Request a slot in the queue
-    const slot = await requestQueueService.requestSlot(channelId, userId);
-    
-    if (slot.queued) {
-      // Notify user they're in the queue
-      await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
-      
-      // Wait for our turn
-      await requestQueueService.waitForSlot(slot.requestId);
-      
-      // Update message now that we're starting
-      await thinkingMsg.edit('Starting summary... fetching messages...');
-    }
-
-    try {
-      // Generate and post summary - pass the thinking message to edit it
-      const result = await summariserService.generateAndPostSummary(
-        channel, 
-        guildId, 
-        client.user.id,
-        summaryMode,
-        targetValue,
-        thinkingMsg,
-        userId  // Pass requester ID for @mention notification
-      );
-
-      // Release the slot
-      requestQueueService.releaseSlot(slot.requestId);
-
-      if (!result.success) {
-        await thinkingMsg.edit(result.error);
-        return;
-      }
-
-      // Update cooldown
-      rateLimitService.updateCooldown(userId, guildId, channelId);
-
-      logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (via ${isMention ? 'mention' : 'prefix'}, mode: ${summaryMode})`);
-    } catch (summaryError) {
-      // Release the slot on error
-      requestQueueService.releaseSlot(slot.requestId);
-      logger.error('Error generating summary:', summaryError);
-      try {
-        await thinkingMsg.edit('An error occurred while generating the summary. Please try again with a smaller message count.');
-      } catch (editError) {
-        logger.error('Could not edit thinking message:', editError);
-      }
-      return;
-    }
+    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (mode: ${summaryMode})`);
   } catch (error) {
-    logger.error('Error handling text command:', error);
-    await message.reply('An error occurred while generating the summary. Please try again later.');
+    requestQueueService.releaseSlot(slot.requestId);
+    logger.error('Error generating summary:', error);
+    await thinkingMsg.edit('An error occurred. Please try again with a smaller message count.');
+  }
+}
+
+// Handle !catchup command
+async function handleCatchupCommand(message, channel, guildId, userId, channelId, args) {
+  const thinkingMsg = await message.reply('Analyzing your absence...');
+  
+  const slot = await requestQueueService.requestSlot(channelId, userId);
+  
+  if (slot.queued) {
+    await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
+    await requestQueueService.waitForSlot(slot.requestId);
+  }
+
+  try {
+    let sinceTimestamp;
+    let sinceDescription;
+    const timeArg = args[0]?.toLowerCase();
+
+    if (timeArg && ['1h', '6h', '12h', '24h', '48h', '7d'].includes(timeArg)) {
+      const timeMap = {
+        '1h': 3600, '6h': 6 * 3600, '12h': 12 * 3600,
+        '24h': 24 * 3600, '48h': 48 * 3600, '7d': 7 * 24 * 3600
+      };
+      sinceTimestamp = Math.floor(Date.now() / 1000) - timeMap[timeArg];
+      sinceDescription = timeArg;
+    } else {
+      // Auto-detect
+      const lastUserMessage = messageCacheService.getLastUserMessage(channelId, userId);
+      if (lastUserMessage) {
+        sinceTimestamp = lastUserMessage.created_at;
+        const hoursAgo = Math.round((Date.now() / 1000 - sinceTimestamp) / 3600);
+        sinceDescription = hoursAgo > 24 ? `${Math.round(hoursAgo / 24)} day(s)` : `${hoursAgo} hour(s)`;
+      } else {
+        sinceTimestamp = Math.floor(Date.now() / 1000) - (24 * 3600);
+        sinceDescription = '24 hours (no recent activity found)';
+      }
+    }
+
+    await thinkingMsg.edit(`Catching you up on messages from ${sinceDescription} ago...`);
+
+    const result = await summariserService.generateCatchupSummary(
+      channel, guildId, client.user.id, userId, sinceTimestamp, thinkingMsg
+    );
+
+    requestQueueService.releaseSlot(slot.requestId);
+
+    if (!result.success) {
+      await thinkingMsg.edit(result.error);
+      return;
+    }
+
+    await thinkingMsg.edit(`Catchup complete! Summarised ${result.messageCount} messages.`);
+    logger.info(`Catchup created by ${message.author.tag} in ${message.guild.name}/#${channel.name}`);
+  } catch (error) {
+    requestQueueService.releaseSlot(slot.requestId);
+    logger.error('Error generating catchup:', error);
+    await thinkingMsg.edit('An error occurred generating your catchup. Please try again.');
+  }
+}
+
+// Handle !topic command
+async function handleTopicCommand(message, channel, guildId, userId, channelId, args) {
+  if (args.length === 0) {
+    await message.reply('Please specify a topic to search for. Example: `!topic docker`');
+    return;
+  }
+
+  const keyword = args.join(' ');
+  const thinkingMsg = await message.reply(`Searching for discussions about "${keyword}"...`);
+  
+  const slot = await requestQueueService.requestSlot(channelId, userId);
+  
+  if (slot.queued) {
+    await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
+    await requestQueueService.waitForSlot(slot.requestId);
+  }
+
+  try {
+    const result = await summariserService.generateTopicSummary(
+      channel, guildId, client.user.id, keyword, 1000, thinkingMsg, userId
+    );
+
+    requestQueueService.releaseSlot(slot.requestId);
+
+    if (!result.success) {
+      await thinkingMsg.edit(result.error);
+      return;
+    }
+
+    await thinkingMsg.edit(`Found ${result.matchCount} messages about "${keyword}".`);
+    logger.info(`Topic search by ${message.author.tag} in ${message.guild.name}/#${channel.name} (keyword: ${keyword})`);
+  } catch (error) {
+    requestQueueService.releaseSlot(slot.requestId);
+    logger.error('Error generating topic summary:', error);
+    await thinkingMsg.edit('An error occurred searching for that topic. Please try again.');
+  }
+}
+
+// Handle !explain command
+async function handleExplainCommand(message, channel, guildId, userId, channelId, args) {
+  if (args.length === 0) {
+    await message.reply('Please specify what you want explained. Example: `!explain the database migration`');
+    return;
+  }
+
+  const topic = args.join(' ');
+  const thinkingMsg = await message.reply(`Analyzing discussions to explain "${topic}"...`);
+  
+  const slot = await requestQueueService.requestSlot(channelId, userId);
+  
+  if (slot.queued) {
+    await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
+    await requestQueueService.waitForSlot(slot.requestId);
+  }
+
+  try {
+    const result = await summariserService.generateExplanation(
+      channel, guildId, client.user.id, topic, 2000, thinkingMsg, userId
+    );
+
+    requestQueueService.releaseSlot(slot.requestId);
+
+    if (!result.success) {
+      await thinkingMsg.edit(result.error);
+      return;
+    }
+
+    await thinkingMsg.edit(`Explanation complete! Analyzed ${result.matchCount} relevant messages.`);
+    logger.info(`Explain request by ${message.author.tag} in ${message.guild.name}/#${channel.name} (topic: ${topic})`);
+  } catch (error) {
+    requestQueueService.releaseSlot(slot.requestId);
+    logger.error('Error generating explanation:', error);
+    await thinkingMsg.edit('An error occurred generating the explanation. Please try again.');
   }
 }
 
@@ -237,7 +371,7 @@ client.once('ready', async () => {
   messageCacheService.startMaintenanceSchedule();
   
   logger.info('Bot is ready to summarise!');
-  logger.info('Commands: /summary, !summary, @mention');
+  logger.info('Commands: /summary, /catchup, /topic, /explain (also !prefix versions)');
 });
 
 // Event: Interaction created (slash commands)
