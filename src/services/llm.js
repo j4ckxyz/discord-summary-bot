@@ -493,37 +493,32 @@ The reader should understand the full conversation about "${keyword}" including 
   async generateExplanation(messages, topic) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a helpful assistant explaining a topic to someone who is confused or lost.
-Your goal is to help them understand what "${topic}" is about based on the Discord discussions.
-
-CRITICAL REQUIREMENTS:
-- Explain like you're helping a newcomer understand
-- Start with the basics - what is this about?
-- Include who the key people involved are and their roles/views
-- Quote specific people to show different perspectives
-- Build understanding progressively
-- Be clear about what's fact vs opinion
-- Note any context that helps understand the discussion`;
+    const systemPrompt = `You are a helpful assistant giving a BRIEF explanation of a topic.
+Keep it SHORT - one paragraph max, plus 2-3 short quotes. No walls of text.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
       .join('\n');
 
-    const userPrompt = `Someone needs help understanding "${topic}". Here are ${messages.length} relevant messages:
+    const userPrompt = `Someone needs a quick explanation of "${topic}". Here are ${messages.length} relevant messages:
 
 ${formattedMessages}
 
-Create an explanation that:
-1. Starts with "**Understanding ${topic}:**"
-2. Begins with a brief "What is this about?" section explaining the basics
-3. Identifies the key people involved and what their perspectives are
-4. Explains the main points of discussion with clear attribution
-5. Uses direct quotes to illustrate key viewpoints: username explained "quote"
-6. Notes any background context that helps understand
-7. Summarizes the current state/conclusion if applicable
-8. Ends with "Key takeaways:" bullet points
+Write a SHORT explanation (under 800 characters total) with this format:
 
-Write this as if explaining to someone who just joined and is confused about what "${topic}" means in this context.`;
+**${topic}** - [One paragraph explaining what this is about and what people think. Keep it to 2-3 sentences max.]
+
+**Key quotes:**
+• username: "short quote"
+• username: "short quote"
+
+STRICT RULES:
+- Maximum 800 characters total
+- One short paragraph only
+- 2-3 quotes maximum, keep quotes brief
+- No bullet point lists except for quotes
+- No "Key takeaways" section
+- No headers except the topic name and "Key quotes"`;
 
     const explanation = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(explanation.trim(), userMap);
