@@ -493,32 +493,26 @@ The reader should understand the full conversation about "${keyword}" including 
   async generateExplanation(messages, topic) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a helpful assistant giving a BRIEF explanation of a topic.
-Keep it SHORT - one paragraph max, plus 2-3 short quotes. No walls of text.`;
+    const systemPrompt = `You are a friendly Discord user casually explaining something to someone who asked. 
+Write like you're chatting naturally - no formatting, no headers, no bullet points. Just a casual message.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
       .join('\n');
 
-    const userPrompt = `Someone needs a quick explanation of "${topic}". Here are ${messages.length} relevant messages:
+    const userPrompt = `Someone asked about "${topic}". Here's the recent discussion:
 
 ${formattedMessages}
 
-Write a SHORT explanation (under 800 characters total) with this format:
+Reply casually like a helpful Discord user catching them up. Write 2-3 sentences max, mention who said what naturally.
 
-**${topic}** - [One paragraph explaining what this is about and what people think. Keep it to 2-3 sentences max.]
+Example tone: "Oh yeah, username was talking about that earlier - basically [quick summary]. username mentioned [detail] too."
 
-**Key quotes:**
-• username: "short quote"
-• username: "short quote"
-
-STRICT RULES:
-- Maximum 800 characters total
-- One short paragraph only
-- 2-3 quotes maximum, keep quotes brief
-- No bullet point lists except for quotes
-- No "Key takeaways" section
-- No headers except the topic name and "Key quotes"`;
+RULES:
+- Max 300 characters
+- No markdown formatting (no bold, no bullets, no headers)
+- Sound like a natural Discord message
+- Reference usernames naturally in the flow`;
 
     const explanation = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(explanation.trim(), userMap);
