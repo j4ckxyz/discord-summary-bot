@@ -130,6 +130,7 @@ class SummariserService {
             .map(msg => ({
               author: msg.author_username,
               authorId: msg.author_id,
+              displayName: msg.author_display_name || msg.author_username,
               content: msg.content || '[attachment/embed]',
               timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
                 hour: '2-digit', 
@@ -264,6 +265,7 @@ class SummariserService {
         .map(msg => ({
           author: msg.author.username,
           authorId: msg.author.id,
+          displayName: msg.author.displayName || msg.author.globalName || msg.author.username,
           content: msg.content || '[attachment/embed]',
           timestamp: new Date(msg.createdTimestamp).toLocaleTimeString('en-GB', { 
             hour: '2-digit', 
@@ -567,6 +569,7 @@ class SummariserService {
       messages = messages.map(msg => ({
         author: msg.author_username,
         authorId: msg.author_id,
+        displayName: msg.author_display_name || msg.author_username,
         content: msg.content || '[attachment/embed]',
         timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
           hour: '2-digit', 
@@ -642,6 +645,7 @@ class SummariserService {
       matchedMessages = matchedMessages.map(msg => ({
         author: msg.author_username,
         authorId: msg.author_id,
+        displayName: msg.author_display_name || msg.author_username,
         content: msg.content || '[attachment/embed]',
         timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
           hour: '2-digit', 
@@ -716,6 +720,7 @@ class SummariserService {
       matchedMessages = matchedMessages.map(msg => ({
         author: msg.author_username,
         authorId: msg.author_id,
+        displayName: msg.author_display_name || msg.author_username,
         content: msg.content || '[attachment/embed]',
         timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
           hour: '2-digit', 

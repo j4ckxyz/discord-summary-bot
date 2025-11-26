@@ -238,23 +238,26 @@ Example format:
   /**
    * Build a map of usernames to user IDs from messages
    * @param {Array} messages - Array of message objects
-   * @returns {Map<string, string>} - Map of username -> userId
+   * @returns {Map<string, Object>} - Map of username -> {userId, displayName}
    */
   buildUserMap(messages) {
     const userMap = new Map();
     for (const msg of messages) {
       if (msg.author && msg.authorId) {
-        userMap.set(msg.author.toLowerCase(), msg.authorId);
+        userMap.set(msg.author.toLowerCase(), {
+          userId: msg.authorId,
+          displayName: msg.displayName || msg.author
+        });
       }
     }
     return userMap;
   }
 
   /**
-   * Replace usernames in text with Discord mentions
+   * Replace usernames in text with display name format (no pings)
    * @param {string} text - The text containing usernames
-   * @param {Map<string, string>} userMap - Map of username -> userId
-   * @returns {string} - Text with usernames replaced by mentions
+   * @param {Map<string, Object>} userMap - Map of username -> {userId, displayName}
+   * @returns {string} - Text with usernames replaced by display name format
    */
   replaceUsernamesWithMentions(text, userMap) {
     let result = text;
@@ -262,17 +265,25 @@ Example format:
     // Sort by username length (longest first) to avoid partial replacements
     const sortedUsers = [...userMap.entries()].sort((a, b) => b[0].length - a[0].length);
     
-    for (const [username, userId] of sortedUsers) {
+    for (const [username, userData] of sortedUsers) {
+      // Format: DisplayName (@username)
+      const displayFormat = userData.displayName !== username 
+        ? `${userData.displayName} (@${username})`
+        : `@${username}`;
+      
       // Match username as a whole word (case-insensitive)
-      // Avoid replacing if already in a mention format or URL
-      const regex = new RegExp(`(?<!<@|<@!|/)\\b${this.escapeRegex(username)}\\b(?!'s\\b)`, 'gi');
-      result = result.replace(regex, `<@${userId}>`);
+      const regex = new RegExp(`(?<!<@|<@!|/|@)\\b${this.escapeRegex(username)}\\b(?!'s\\b)`, 'gi');
+      result = result.replace(regex, displayFormat);
     }
     
-    // Also handle possessives like "username's" -> "<@id>'s"
-    for (const [username, userId] of sortedUsers) {
-      const possessiveRegex = new RegExp(`(?<!<@|<@!|/)\\b${this.escapeRegex(username)}'s\\b`, 'gi');
-      result = result.replace(possessiveRegex, `<@${userId}>'s`);
+    // Also handle possessives like "username's" -> "DisplayName (@username)'s"
+    for (const [username, userData] of sortedUsers) {
+      const displayFormat = userData.displayName !== username 
+        ? `${userData.displayName} (@${username})`
+        : `@${username}`;
+      
+      const possessiveRegex = new RegExp(`(?<!<@|<@!|/|@)\\b${this.escapeRegex(username)}'s\\b`, 'gi');
+      result = result.replace(possessiveRegex, `${displayFormat}'s`);
     }
     
     return result;

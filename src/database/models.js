@@ -112,8 +112,8 @@ export const MessageCacheModel = {
     const now = Math.floor(Date.now() / 1000);
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO cached_messages 
-      (id, channel_id, guild_id, author_id, author_username, content, created_at, reference_id, cached_at, deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      (id, channel_id, guild_id, author_id, author_username, author_display_name, content, created_at, reference_id, cached_at, deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
     
     return stmt.run(
@@ -122,6 +122,7 @@ export const MessageCacheModel = {
       message.guild?.id || '',
       message.author.id,
       message.author.username,
+      message.author.displayName || message.author.globalName || message.author.username,
       message.content || '',
       Math.floor(message.createdTimestamp / 1000),
       message.reference?.messageId || null,
@@ -137,8 +138,8 @@ export const MessageCacheModel = {
     const now = Math.floor(Date.now() / 1000);
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO cached_messages 
-      (id, channel_id, guild_id, author_id, author_username, content, created_at, reference_id, cached_at, deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      (id, channel_id, guild_id, author_id, author_username, author_display_name, content, created_at, reference_id, cached_at, deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
 
     const insertMany = db.transaction((msgs) => {
@@ -149,6 +150,7 @@ export const MessageCacheModel = {
           msg.guild?.id || '',
           msg.author.id,
           msg.author.username,
+          msg.author.displayName || msg.author.globalName || msg.author.username,
           msg.content || '',
           Math.floor(msg.createdTimestamp / 1000),
           msg.reference?.messageId || null,
@@ -300,6 +302,7 @@ export const MessageCacheModel = {
     const stmt = db.prepare(`
       SELECT * FROM cached_messages 
       WHERE channel_id = ? AND author_id = ? AND deleted = 0
+        AND content NOT LIKE '!%' AND content NOT LIKE '/%'
       ORDER BY created_at DESC
       LIMIT 1
     `);

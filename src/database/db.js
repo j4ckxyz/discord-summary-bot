@@ -131,6 +131,13 @@ const initDb = () => {
     CREATE INDEX IF NOT EXISTS idx_cache_channel_deleted 
     ON cached_messages(channel_id, deleted);
   `);
+
+  // Add author_display_name column if it doesn't exist
+  try {
+    db.exec(`ALTER TABLE cached_messages ADD COLUMN author_display_name TEXT`);
+  } catch (error) {
+    // Column already exists, ignore
+  }
 };
 
 // Run migration first, then initialize
