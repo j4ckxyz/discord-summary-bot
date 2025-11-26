@@ -103,13 +103,14 @@ export default {
       // Defer reply as this might take a while
       await interaction.deferReply();
 
-      // Generate and post summary
+      // Generate and post summary - pass interaction for progress updates
       const result = await summariserService.generateAndPostSummary(
         channel, 
         guildId, 
         interaction.client.user.id,
         summaryMode,
-        targetValue
+        targetValue,
+        interaction  // Pass interaction so we can update the deferred reply with progress
       );
 
       if (!result.success) {

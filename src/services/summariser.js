@@ -69,7 +69,7 @@ class SummariserService {
 
   /**
    * Update progress message with rate limiting to avoid Discord API spam
-   * @param {Object} editableMessage - Message to edit
+   * @param {Object} editableMessage - Message to edit OR interaction to editReply
    * @param {string} text - New message text
    * @param {number} lastUpdate - Timestamp of last update
    * @returns {Promise<number>} - Timestamp of this update (or last if skipped)
@@ -82,7 +82,12 @@ class SummariserService {
     }
     
     try {
-      await editableMessage.edit(text);
+      // Check if this is an interaction (has editReply) or a message (has edit)
+      if (editableMessage.editReply) {
+        await editableMessage.editReply(text);
+      } else {
+        await editableMessage.edit(text);
+      }
       return now;
     } catch (error) {
       logger.debug('Could not update progress message:', error.message);
