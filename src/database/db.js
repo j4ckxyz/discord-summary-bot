@@ -95,6 +95,22 @@ const initDb = () => {
     )
   `);
 
+  // Table to cache messages for faster repeated summaries
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cached_messages (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      author_username TEXT NOT NULL,
+      content TEXT,
+      created_at INTEGER NOT NULL,
+      reference_id TEXT,
+      cached_at INTEGER NOT NULL,
+      deleted INTEGER DEFAULT 0
+    )
+  `);
+
   // Create indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_summaries_guild_channel 
@@ -104,6 +120,16 @@ const initDb = () => {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_cooldowns_user_guild_channel 
     ON cooldowns(user_id, guild_id, channel_id, timestamp);
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cache_channel_time 
+    ON cached_messages(channel_id, created_at DESC);
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cache_channel_deleted 
+    ON cached_messages(channel_id, deleted);
   `);
 };
 

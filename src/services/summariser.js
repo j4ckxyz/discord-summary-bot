@@ -1,5 +1,6 @@
 import { SummaryModel } from '../database/models.js';
 import llmService from './llm.js';
+import messageCacheService from './messageCache.js';
 import logger from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
@@ -110,16 +111,66 @@ class SummariserService {
       let fetchedMessages;
       
       if (mode === 'count') {
+        // Try to use cache first for 'count' mode
+        const cachedCount = messageCacheService.getCachedMessageCount(channel.id, botUserId);
+        
+        if (cachedCount >= targetValue) {
+          // We have enough cached messages - use them directly
+          logger.info(`Using ${targetValue} messages from cache (${cachedCount} available)`);
+          
+          if (editableMessage) {
+            await this.updateProgress(editableMessage, `Loading ${targetValue.toLocaleString()} messages from cache...`, 0);
+          }
+          
+          const cachedMessages = messageCacheService.getCachedMessages(channel.id, targetValue, botUserId);
+          
+          // Convert cached format to our format
+          const messages = cachedMessages
+            .sort((a, b) => a.created_at - b.created_at)
+            .map(msg => ({
+              author: msg.author_username,
+              authorId: msg.author_id,
+              content: msg.content || '[attachment/embed]',
+              timestamp: new Date(msg.created_at * 1000).toLocaleTimeString('en-GB', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+              }),
+              referencedMessageId: msg.reference_id || null,
+              referencedAuthor: null
+            }));
+          
+          // Fill in referenced authors from cache
+          const messageMap = new Map(cachedMessages.map(m => [m.id, m.author_username]));
+          for (let msg of messages) {
+            if (msg.referencedMessageId && messageMap.has(msg.referencedMessageId)) {
+              msg.referencedAuthor = messageMap.get(msg.referencedMessageId);
+            }
+          }
+          
+          return messages;
+        }
+        
+        // Need to fetch from Discord API (cache doesn't have enough)
+        logger.info(`Cache has ${cachedCount} messages, need ${targetValue} - fetching from Discord...`);
+        
         // Fetch specific number of messages with pagination
         const allMessages = [];
         let lastId = null;
         let totalFetched = 0;
         let lastProgressUpdate = 0;
         
-        logger.info(`Fetching ${targetValue} messages...`);
+        // If we have some cached messages, start fetching from before the oldest cached one
+        const oldestCached = messageCacheService.getOldestCachedMessage(channel.id);
+        if (oldestCached && cachedCount > 0) {
+          lastId = oldestCached.id;
+          // We'll merge cached messages with newly fetched ones later
+        }
         
-        while (totalFetched < targetValue) {
-          const fetchOptions = { limit: Math.min(100, targetValue - totalFetched) };
+        const messagesToFetch = targetValue;
+        logger.info(`Fetching ${messagesToFetch} messages...`);
+        
+        while (totalFetched < messagesToFetch) {
+          const fetchOptions = { limit: Math.min(100, messagesToFetch - totalFetched) };
           if (lastId) fetchOptions.before = lastId;
           
           const batch = await channel.messages.fetch(fetchOptions);
@@ -129,29 +180,32 @@ class SummariserService {
             break;
           }
           
+          // Cache the fetched messages for future use
+          messageCacheService.cacheMessages(Array.from(batch.values()));
+          
           allMessages.push(...batch.values());
           totalFetched += batch.size;
           lastId = batch.last().id;
           
           // Log progress every 500 messages for large fetches
-          if (totalFetched % 500 === 0 || totalFetched >= targetValue) {
-            logger.info(`Fetched ${totalFetched}/${targetValue} messages`);
+          if (totalFetched % 500 === 0 || totalFetched >= messagesToFetch) {
+            logger.info(`Fetched ${totalFetched}/${messagesToFetch} messages`);
           } else {
-            logger.debug(`Fetched ${totalFetched}/${targetValue} messages`);
+            logger.debug(`Fetched ${totalFetched}/${messagesToFetch} messages`);
           }
           
           // Update progress message for user visibility
           if (editableMessage) {
-            const percent = Math.round((totalFetched / targetValue) * 100);
+            const percent = Math.round((totalFetched / messagesToFetch) * 100);
             lastProgressUpdate = await this.updateProgress(
               editableMessage, 
-              `Fetching messages... ${totalFetched.toLocaleString()}/${targetValue.toLocaleString()} (${percent}%)`,
+              `Fetching messages... ${totalFetched.toLocaleString()}/${messagesToFetch.toLocaleString()} (${percent}%)`,
               lastProgressUpdate
             );
           }
           
           // Delay to avoid rate limits - longer delay for large fetches
-          if (totalFetched < targetValue) {
+          if (totalFetched < messagesToFetch) {
             await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
           }
         }

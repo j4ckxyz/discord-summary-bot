@@ -4,6 +4,7 @@ import logger from './utils/logger.js';
 import summariseCommand from './commands/summarise.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
+import messageCacheService from './services/messageCache.js';
 import { config } from './utils/config.js';
 
 // Validate environment variables
@@ -208,6 +209,9 @@ client.once('ready', async () => {
   // Register slash commands
   await registerCommands();
   
+  // Start cache maintenance (cleanup old messages daily)
+  messageCacheService.startMaintenanceSchedule();
+  
   logger.info('Bot is ready to summarise!');
   logger.info('Commands: /summary, !summary, @mention');
 });
@@ -237,8 +241,30 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Event: Message created (for prefix and mention commands)
-client.on('messageCreate', handleTextCommand);
+// Event: Message created (for prefix and mention commands, and caching)
+client.on('messageCreate', (message) => {
+  // Cache the message if caching is enabled (ignore bots)
+  if (!message.author.bot && message.guild) {
+    messageCacheService.cacheMessage(message);
+  }
+  
+  // Handle text commands
+  handleTextCommand(message);
+});
+
+// Event: Message deleted (update cache)
+client.on('messageDelete', (message) => {
+  if (message.guild) {
+    messageCacheService.markMessageDeleted(message.id);
+  }
+});
+
+// Event: Message updated (update cache)
+client.on('messageUpdate', (oldMessage, newMessage) => {
+  if (newMessage.guild && !newMessage.author?.bot) {
+    messageCacheService.updateMessage(newMessage);
+  }
+});
 
 // Event: Error handling
 client.on('error', (error) => {
