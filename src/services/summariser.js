@@ -462,6 +462,9 @@ class SummariserService {
     
     logger.info(`Using hierarchical summarization: ${totalMessages} messages in ${numChunks} chunks`);
     
+    // Build username -> userId map for mentions
+    const userMap = llmService.buildUserMap(messages);
+    
     let lastProgressUpdate = 0;
     const chunkSummaries = [];
     
@@ -507,7 +510,8 @@ class SummariserService {
     
     const finalSummary = await llmService.combineSummaries(chunkSummaries, totalMessages);
     
-    return finalSummary;
+    // Replace usernames with Discord mentions
+    return llmService.replaceUsernamesWithMentions(finalSummary, userMap);
   }
 
   /**

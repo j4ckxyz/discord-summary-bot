@@ -141,6 +141,9 @@ class LLMService {
    * @returns {Promise<string>} - The summary text
    */
   async summariseMessages(messages, mode = 'default', targetUsername = null) {
+    // Build username -> userId map for mentions
+    const userMap = this.buildUserMap(messages);
+    
     // Use topic-based format for large message counts (>100 messages)
     const useTopicFormat = mode === 'count' && messages.length > 100;
     
@@ -197,9 +200,9 @@ Example format:
     
     logger.debug(`LLM returned summary of ${summary.length} characters`);
     
-    // For topic format, don't enforce character limit
+    // For topic format, don't enforce character limit, just replace usernames with mentions
     if (useTopicFormat) {
-      return summary.trim();
+      return this.replaceUsernamesWithMentions(summary.trim(), userMap);
     }
     
     // Ensure summary doesn't exceed max length and doesn't end with trailing dots
@@ -228,7 +231,60 @@ Example format:
       }
     }
     
-    return trimmedSummary;
+    // Replace usernames with Discord mentions
+    return this.replaceUsernamesWithMentions(trimmedSummary, userMap);
+  }
+
+  /**
+   * Build a map of usernames to user IDs from messages
+   * @param {Array} messages - Array of message objects
+   * @returns {Map<string, string>} - Map of username -> userId
+   */
+  buildUserMap(messages) {
+    const userMap = new Map();
+    for (const msg of messages) {
+      if (msg.author && msg.authorId) {
+        userMap.set(msg.author.toLowerCase(), msg.authorId);
+      }
+    }
+    return userMap;
+  }
+
+  /**
+   * Replace usernames in text with Discord mentions
+   * @param {string} text - The text containing usernames
+   * @param {Map<string, string>} userMap - Map of username -> userId
+   * @returns {string} - Text with usernames replaced by mentions
+   */
+  replaceUsernamesWithMentions(text, userMap) {
+    let result = text;
+    
+    // Sort by username length (longest first) to avoid partial replacements
+    const sortedUsers = [...userMap.entries()].sort((a, b) => b[0].length - a[0].length);
+    
+    for (const [username, userId] of sortedUsers) {
+      // Match username as a whole word (case-insensitive)
+      // Avoid replacing if already in a mention format or URL
+      const regex = new RegExp(`(?<!<@|<@!|/)\\b${this.escapeRegex(username)}\\b(?!'s\\b)`, 'gi');
+      result = result.replace(regex, `<@${userId}>`);
+    }
+    
+    // Also handle possessives like "username's" -> "<@id>'s"
+    for (const [username, userId] of sortedUsers) {
+      const possessiveRegex = new RegExp(`(?<!<@|<@!|/)\\b${this.escapeRegex(username)}'s\\b`, 'gi');
+      result = result.replace(possessiveRegex, `<@${userId}>'s`);
+    }
+    
+    return result;
+  }
+
+  /**
+   * Escape special regex characters in a string
+   * @param {string} string - The string to escape
+   * @returns {string} - Escaped string
+   */
+  escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   /**
