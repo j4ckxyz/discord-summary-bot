@@ -399,43 +399,34 @@ Create a COMPREHENSIVE final summary that:
   async summariseCatchup(messages, mentionedMessages, requesterId) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a helpful Discord assistant helping someone catch up on what they missed.
-Your goal is to help them quickly understand what happened while they were away.
-
-CRITICAL REQUIREMENTS:
-- ALWAYS include usernames when describing who said what
-- Include direct quotes for important/notable statements
-- Highlight any decisions, announcements, or action items
-- Group by topic for easy scanning
-- Be specific about what each person said - don't generalize
-- If there were any debates or disagreements, present both sides fairly`;
+    const systemPrompt = `You are a friendly Discord user catching someone up on what they missed.
+Write like you're chatting naturally - casual, conversational, no formatting. Just a normal message.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
       .join('\n');
 
-    let mentionSection = '';
+    let mentionNote = '';
     if (mentionedMessages.length > 0) {
-      const formattedMentions = mentionedMessages
-        .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
-        .join('\n');
-      mentionSection = `\n\n**IMPORTANT - You were mentioned in these messages:**\n${formattedMentions}`;
+      const mentionAuthors = [...new Set(mentionedMessages.map(m => m.author))].join(', ');
+      mentionNote = `\n\nIMPORTANT: They were mentioned by ${mentionAuthors} - make sure to tell them about this first!`;
     }
 
-    const userPrompt = `Here are the messages since you were last active (${messages.length} total):
+    const userPrompt = `Here's what happened while they were gone (${messages.length} messages):
 
 ${formattedMessages}
-${mentionSection}
+${mentionNote}
 
-Create a catchup summary that:
-1. Starts with "**While you were away...**"
-2. ${mentionedMessages.length > 0 ? `First highlights the ${mentionedMessages.length} message(s) where you were mentioned` : 'Notes if anything requires your attention'}
-3. Groups discussions by **Topic** headers
-4. Under each topic, summarizes WHO said WHAT with specific details
-5. Includes notable quotes: username said "quote"
-6. Ends with any pending decisions or action items if applicable
+Catch them up casually like a friend would. Keep it short and natural - just the important stuff.
 
-Keep it informative but scannable - use bullet points and clear formatting.`;
+Example tone: "Hey! So while you were gone, username and username2 were chatting about [topic]. username mentioned [key point]. ${mentionedMessages.length > 0 ? 'Oh and username pinged you about [thing].' : ''}"
+
+RULES:
+- Max 400 characters
+- No markdown formatting (no bold, no bullets, no headers)
+- Sound like a natural Discord message
+- Mention usernames naturally in the flow
+- If they were mentioned, lead with that`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(summary.trim(), userMap);
@@ -450,16 +441,8 @@ Keep it informative but scannable - use bullet points and clear formatting.`;
   async summariseTopic(messages, keyword) {
     const userMap = this.buildUserMap(messages);
     
-    const systemPrompt = `You are a Discord assistant summarizing discussions about a specific topic.
-Your goal is to help someone understand everything that was discussed about "${keyword}".
-
-CRITICAL REQUIREMENTS:
-- ALWAYS include usernames when describing who said what
-- Present different people's viewpoints and opinions clearly
-- Include direct quotes for key statements
-- Note any agreements, disagreements, or decisions
-- Be neutral and present all perspectives fairly
-- Group related discussions together chronologically`;
+    const systemPrompt = `You are a friendly Discord user explaining what's been said about a topic.
+Write like you're chatting naturally - casual, conversational, no formatting. Just a normal message.`;
 
     const formattedMessages = messages
       .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
@@ -469,16 +452,16 @@ CRITICAL REQUIREMENTS:
 
 ${formattedMessages}
 
-Create a comprehensive summary about "${keyword}" that:
-1. Starts with "**Discussions about ${keyword}:**"
-2. Summarizes the main points discussed
-3. Clearly attributes WHO said WHAT - every viewpoint should have a username
-4. Includes direct quotes for key statements: username said "quote"
-5. Notes different opinions or perspectives if people disagreed
-6. Highlights any decisions or conclusions reached
-7. Is organized chronologically or by sub-topic
+Explain what people have been saying about "${keyword}" casually, like you're filling someone in.
 
-The reader should understand the full conversation about "${keyword}" including who contributed what.`;
+Example tone: "So about ${keyword} - username was saying [point], and username2 thinks [opinion]. They ended up agreeing that [conclusion]."
+
+RULES:
+- Max 400 characters
+- No markdown formatting (no bold, no bullets, no headers)
+- Sound like a natural Discord message
+- Mention usernames naturally when attributing opinions
+- Capture the key points and any disagreements`;
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(summary.trim(), userMap);
