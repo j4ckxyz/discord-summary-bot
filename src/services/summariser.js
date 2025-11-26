@@ -395,9 +395,9 @@ class SummariserService {
       if (editableMessage) {
         // Check if this is an interaction (has editReply) or a message (has edit)
         if (editableMessage.editReply) {
-          await editableMessage.editReply(validChunks[0]);
-          // For interactions, we need to fetch the reply to get the message object
-          sentMessage = await editableMessage.fetchReply();
+          // For interactions (slash commands), send summary to channel, not via editReply
+          // The interaction reply will be used for confirmation message later
+          sentMessage = await channel.send(validChunks[0]);
         } else {
           sentMessage = await editableMessage.edit(validChunks[0]);
         }
