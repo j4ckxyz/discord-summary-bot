@@ -105,16 +105,18 @@ async function handleTextCommand(message) {
 
 **Advanced Options:**
 \`!summary 500\` - Summarise the last 500 messages
+\`!summary 50000\` - Summarise the last 50,000 messages (up to 100k supported)
 \`!summary @user\` - Summarise a user's 50 most recent messages
 \`!summary <userID>\` - Same as above, using Discord user ID
 
 **Rate Limits:**
 • ${config.maxUsesPerWindow} summaries per ${config.cooldownMinutes} minutes per channel
-• Summaries are capped at ${config.maxSummaryLength} characters
+• Summaries are capped at ${config.maxSummaryLength} characters (for small requests)
 
 **Tips:**
 • User summaries focus only on that user's messages
-• All summaries are neutral and objective`;
+• All summaries are neutral and objective
+• Large message counts use hierarchical summarization for efficiency`;
 
     await message.reply(helpMessage);
     return;
@@ -127,13 +129,17 @@ async function handleTextCommand(message) {
   if (targetInput) {
     const numericValue = parseInt(targetInput, 10);
     
+    // Discord user IDs are 17-19 digits (snowflakes)
+    // Message counts can be up to 100k
     if (!isNaN(numericValue)) {
-      if (numericValue > 10000) {
+      if (targetInput.length >= 17 && numericValue > 100000) {
+        // Likely a user ID (Discord snowflake) - 17+ digits
         summaryMode = 'user';
         targetValue = targetInput;
       } else {
+        // Message count - cap at 100k
         summaryMode = 'count';
-        targetValue = Math.min(numericValue, 10000); // Cap at 10k to prevent timeouts
+        targetValue = Math.min(Math.max(numericValue, 1), 100000);
       }
     } else {
       const mentionMatch = targetInput.match(/^<@!?(\d+)>$/);
@@ -155,7 +161,7 @@ async function handleTextCommand(message) {
     }
 
     // Send thinking message
-    const thinkingMsg = await message.reply('Generating summary...');
+    const thinkingMsg = await message.reply('Starting summary... fetching messages...');
 
     logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
 

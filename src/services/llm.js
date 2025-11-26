@@ -205,6 +205,80 @@ Example format:
   getTopicBasedSystemPrompt() {
     return 'You are a Discord chat summariser. Organize conversations by topic using SHORT bullet points. Each topic should have 2-3 bullet points MAX, with each point being ONE sentence. Be concise, neutral, and objective. Always mention who said what.';
   }
+
+  /**
+   * Summarize a chunk of messages for hierarchical summarization
+   * @param {Array} messages - Array of message objects for this chunk
+   * @param {number} chunkIndex - Which chunk this is (1-based)
+   * @param {number} totalChunks - Total number of chunks
+   * @param {string} startTime - Start time of the chunk
+   * @param {string} endTime - End time of the chunk
+   * @returns {Promise<string>} - Chunk summary
+   */
+  async summariseChunk(messages, chunkIndex, totalChunks, startTime, endTime) {
+    const systemPrompt = `You are a Discord chat summariser. You are summarizing chunk ${chunkIndex} of ${totalChunks} of a large conversation.
+Your goal is to extract the KEY topics and discussions from this chunk. Be concise but comprehensive.
+Focus on: main topics discussed, who participated, any decisions made, and notable events.
+Output should be organized by topic with bullet points. Keep each topic section brief (2-4 bullet points max).`;
+
+    // Format messages for the LLM
+    const formattedMessages = messages
+      .map(msg => {
+        let msgStr = `[${msg.timestamp}] ${msg.author}: ${msg.content}`;
+        if (msg.referencedAuthor) {
+          msgStr += ` (replying to ${msg.referencedAuthor})`;
+        }
+        return msgStr;
+      })
+      .join('\n');
+
+    const userPrompt = `Time range: ${startTime} to ${endTime}
+Messages in this chunk: ${messages.length}
+
+${formattedMessages}
+
+Summarize the key topics and discussions in this chunk. Use topic headers with bullet points. Be concise.`;
+
+    const summary = await this.generateCompletion(systemPrompt, userPrompt);
+    logger.debug(`Chunk ${chunkIndex} summary: ${summary.length} characters`);
+    
+    return summary.trim();
+  }
+
+  /**
+   * Combine multiple chunk summaries into a final summary
+   * @param {Array} chunkSummaries - Array of {index, startTime, endTime, messageCount, summary}
+   * @param {number} totalMessages - Total number of messages across all chunks
+   * @returns {Promise<string>} - Final combined summary
+   */
+  async combineSummaries(chunkSummaries, totalMessages) {
+    const systemPrompt = `You are a Discord chat summariser. You are combining ${chunkSummaries.length} partial summaries into one cohesive final summary.
+Your goal is to:
+1. Merge related topics that appear across chunks
+2. Identify the main themes of the conversation
+3. Provide a comprehensive but concise overview
+4. Organize by topic, not by time/chunk
+
+Format your response with topic headers in bold and bullet points underneath. Keep it organized and easy to read.`;
+
+    const summariesText = chunkSummaries.map(chunk => 
+      `=== Chunk ${chunk.index} (${chunk.startTime} - ${chunk.endTime}, ${chunk.messageCount} messages) ===\n${chunk.summary}`
+    ).join('\n\n');
+
+    const userPrompt = `Total messages summarized: ${totalMessages}
+Number of chunks: ${chunkSummaries.length}
+
+Partial summaries to combine:
+
+${summariesText}
+
+Create a cohesive final summary that merges related topics and provides a complete overview. Use topic headers with bullet points.`;
+
+    const summary = await this.generateCompletion(systemPrompt, userPrompt);
+    logger.debug(`Final combined summary: ${summary.length} characters`);
+    
+    return summary.trim();
+  }
 }
 
 export default new LLMService();

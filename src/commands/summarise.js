@@ -32,6 +32,7 @@ export default {
 
 **Advanced Options:**
 \`/summary target:500\` - Summarise the last 500 messages
+\`/summary target:50000\` - Summarise the last 50,000 messages (up to 100k supported)
 \`/summary target:@user\` - Summarise a user's 50 most recent messages
 \`/summary target:<userID>\` - Same as above, using Discord user ID
 
@@ -41,11 +42,12 @@ export default {
 
 **Rate Limits:**
 • ${config.maxUsesPerWindow} summaries per ${config.cooldownMinutes} minutes per channel
-• Summaries are capped at ${config.maxSummaryLength} characters
+• Summaries are capped at ${config.maxSummaryLength} characters (for small requests)
 
 **Tips:**
 • User summaries focus only on that user's messages
-• All summaries are neutral and objective`;
+• All summaries are neutral and objective
+• Large message counts use hierarchical summarization for efficiency`;
 
         await interaction.reply({ content: helpMessage, ephemeral: true });
         return;
@@ -58,17 +60,17 @@ export default {
       if (targetInput) {
         const numericValue = parseInt(targetInput, 10);
         
-        // Discord user IDs are typically 17-19 digits long
-        // Message counts are typically smaller (1-1000)
+        // Discord user IDs are 17-19 digits (snowflakes)
+        // Message counts can be up to 100k
         if (!isNaN(numericValue)) {
-          if (numericValue > 10000) {
-            // Likely a user ID (Discord snowflake)
+          if (targetInput.length >= 17 && numericValue > 100000) {
+            // Likely a user ID (Discord snowflake) - 17+ digits
             summaryMode = 'user';
             targetValue = targetInput;
           } else {
-            // Likely a message count
+            // Message count - cap at 100k
             summaryMode = 'count';
-            targetValue = Math.min(numericValue, 10000); // Cap at 10k to prevent timeouts
+            targetValue = Math.min(Math.max(numericValue, 1), 100000);
           }
         } else {
           // Try to extract user ID from mention format <@123456789>

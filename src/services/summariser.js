@@ -3,6 +3,10 @@ import llmService from './llm.js';
 import logger from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
+// Configuration for large message handling
+const CHUNK_SIZE = 500; // Messages per chunk for hierarchical summarization
+const RATE_LIMIT_DELAY = 250; // ms between Discord API calls to avoid rate limits
+
 class SummariserService {
   /**
    * Split a long message into Discord-safe chunks (max 2000 chars each)
@@ -64,15 +68,39 @@ class SummariserService {
   }
 
   /**
+   * Update progress message with rate limiting to avoid Discord API spam
+   * @param {Object} editableMessage - Message to edit
+   * @param {string} text - New message text
+   * @param {number} lastUpdate - Timestamp of last update
+   * @returns {Promise<number>} - Timestamp of this update (or last if skipped)
+   */
+  async updateProgress(editableMessage, text, lastUpdate = 0) {
+    const now = Date.now();
+    // Only update every 2 seconds to avoid rate limits
+    if (now - lastUpdate < 2000) {
+      return lastUpdate;
+    }
+    
+    try {
+      await editableMessage.edit(text);
+      return now;
+    } catch (error) {
+      logger.debug('Could not update progress message:', error.message);
+      return lastUpdate;
+    }
+  }
+
+  /**
    * Fetch messages from a channel since the last summary
    * @param {Object} channel - Discord channel object
    * @param {string} guildId - Discord guild ID
    * @param {string} botUserId - Bot's user ID to filter out bot messages
    * @param {string} mode - 'default', 'count', or 'user'
    * @param {any} targetValue - Message count or user ID depending on mode
+   * @param {Object} editableMessage - Optional message to update with progress
    * @returns {Promise<Array>} - Array of formatted message objects
    */
-  async fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode = 'default', targetValue = null) {
+  async fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode = 'default', targetValue = null, editableMessage = null) {
     try {
       let fetchedMessages;
       
@@ -81,6 +109,7 @@ class SummariserService {
         const allMessages = [];
         let lastId = null;
         let totalFetched = 0;
+        let lastProgressUpdate = 0;
         
         logger.info(`Fetching ${targetValue} messages...`);
         
@@ -100,15 +129,25 @@ class SummariserService {
           lastId = batch.last().id;
           
           // Log progress every 500 messages for large fetches
-          if (totalFetched % 500 === 0 || totalFetched === targetValue) {
+          if (totalFetched % 500 === 0 || totalFetched >= targetValue) {
             logger.info(`Fetched ${totalFetched}/${targetValue} messages`);
           } else {
             logger.debug(`Fetched ${totalFetched}/${targetValue} messages`);
           }
           
-          // Small delay to avoid rate limits
+          // Update progress message for user visibility
+          if (editableMessage) {
+            const percent = Math.round((totalFetched / targetValue) * 100);
+            lastProgressUpdate = await this.updateProgress(
+              editableMessage, 
+              `Fetching messages... ${totalFetched.toLocaleString()}/${targetValue.toLocaleString()} (${percent}%)`,
+              lastProgressUpdate
+            );
+          }
+          
+          // Delay to avoid rate limits - longer delay for large fetches
           if (totalFetched < targetValue) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
           }
         }
         
@@ -219,8 +258,8 @@ class SummariserService {
    */
   async generateAndPostSummary(channel, guildId, botUserId, mode = 'default', targetValue = null, editableMessage = null) {
     try {
-      // Fetch messages
-      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode, targetValue);
+      // Fetch messages - pass editable message for progress updates
+      const messages = await this.fetchMessagesSinceLastSummary(channel, guildId, botUserId, mode, targetValue, editableMessage);
 
       if (messages.length === 0) {
         if (mode === 'user') {
@@ -251,8 +290,18 @@ class SummariserService {
         targetUsername = messages[0].author;
       }
 
-      // Generate summary using LLM
-      const summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
+      // For large message counts, use hierarchical summarization
+      let summaryText;
+      if (mode === 'count' && messages.length > CHUNK_SIZE) {
+        summaryText = await this.hierarchicalSummarise(messages, editableMessage);
+      } else {
+        // Update progress if we have an editable message
+        if (editableMessage) {
+          await this.updateProgress(editableMessage, `Generating summary for ${messages.length.toLocaleString()} messages...`, 0);
+        }
+        // Generate summary using LLM
+        summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
+      }
 
       // Validate summary is not empty
       if (!summaryText || summaryText.trim().length === 0) {
@@ -332,6 +381,67 @@ class SummariserService {
       logger.error('Error generating summary:', error);
       throw error;
     }
+  }
+
+  /**
+   * Perform hierarchical summarization for large message counts
+   * Splits messages into chunks, summarizes each chunk, then combines summaries
+   * @param {Array} messages - Array of formatted message objects
+   * @param {Object} editableMessage - Optional message to update with progress
+   * @returns {Promise<string>} - Final combined summary
+   */
+  async hierarchicalSummarise(messages, editableMessage = null) {
+    const totalMessages = messages.length;
+    const numChunks = Math.ceil(totalMessages / CHUNK_SIZE);
+    
+    logger.info(`Using hierarchical summarization: ${totalMessages} messages in ${numChunks} chunks`);
+    
+    let lastProgressUpdate = 0;
+    const chunkSummaries = [];
+    
+    // First pass: summarize each chunk
+    for (let i = 0; i < numChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalMessages);
+      const chunk = messages.slice(start, end);
+      
+      // Update progress
+      if (editableMessage) {
+        const progress = `Summarising chunk ${i + 1}/${numChunks} (messages ${start + 1}-${end} of ${totalMessages.toLocaleString()})...`;
+        lastProgressUpdate = await this.updateProgress(editableMessage, progress, lastProgressUpdate);
+      }
+      
+      logger.info(`Summarising chunk ${i + 1}/${numChunks} (${chunk.length} messages)`);
+      
+      // Get chunk time range for context
+      const startTime = chunk[0]?.timestamp || 'unknown';
+      const endTime = chunk[chunk.length - 1]?.timestamp || 'unknown';
+      
+      // Summarize this chunk
+      const chunkSummary = await llmService.summariseChunk(chunk, i + 1, numChunks, startTime, endTime);
+      chunkSummaries.push({
+        index: i + 1,
+        startTime,
+        endTime,
+        messageCount: chunk.length,
+        summary: chunkSummary
+      });
+    }
+    
+    // Second pass: combine all chunk summaries into final summary
+    if (editableMessage) {
+      lastProgressUpdate = await this.updateProgress(
+        editableMessage, 
+        `Combining ${numChunks} summaries into final summary...`,
+        lastProgressUpdate
+      );
+    }
+    
+    logger.info(`Combining ${numChunks} chunk summaries into final summary`);
+    
+    const finalSummary = await llmService.combineSummaries(chunkSummaries, totalMessages);
+    
+    return finalSummary;
   }
 
   /**
