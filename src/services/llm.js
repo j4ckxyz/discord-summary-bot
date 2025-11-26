@@ -26,6 +26,11 @@ class LLMService {
    * @returns {Promise<string>} - The generated text
    */
   async generateGeminiCompletion(systemPrompt, userPrompt) {
+    const startTime = Date.now();
+    const promptLength = systemPrompt.length + userPrompt.length;
+    
+    logger.llm(`Gemini API call starting | model=${this.model} | prompt_chars=${promptLength}`);
+    
     try {
       // Configure safety settings to be permissive for chat summarization
       // Discord chats may contain mature language that shouldn't block summarization
@@ -61,15 +66,21 @@ class LLMService {
       if (!response.text) {
         const blockReason = response.promptFeedback?.blockReason;
         if (blockReason) {
-          logger.warn(`Gemini blocked response: ${blockReason}`);
+          logger.llm(`Gemini response BLOCKED | reason=${blockReason}`, 'WARN');
           throw new Error(`Content blocked: ${blockReason}`);
         }
         throw new Error('Empty response from Gemini');
       }
       
-      return response.text();
+      const responseText = response.text();
+      const elapsed = Date.now() - startTime;
+      
+      logger.llm(`Gemini API call complete | response_chars=${responseText.length} | time=${elapsed}ms`);
+      
+      return responseText;
     } catch (error) {
-      logger.error('Gemini API error:', error.message);
+      const elapsed = Date.now() - startTime;
+      logger.llm(`Gemini API call FAILED | error=${error.message} | time=${elapsed}ms`, 'ERROR');
       throw new Error(`Failed to generate summary from Gemini: ${error.message}`);
     }
   }
@@ -81,16 +92,21 @@ class LLMService {
    * @returns {Promise<string>} - The generated text
    */
   async generateOpenAICompletion(systemPrompt, userPrompt) {
-    try {
-      let baseUrl;
-      if (this.provider === 'openrouter') {
-        baseUrl = 'https://openrouter.ai/api/v1';
-      } else if (this.provider === 'openai') {
-        baseUrl = 'https://api.openai.com/v1';
-      } else {
-        baseUrl = process.env.LLM_API_BASE_URL || 'https://openrouter.ai/api/v1';
-      }
+    const startTime = Date.now();
+    const promptLength = systemPrompt.length + userPrompt.length;
+    
+    let baseUrl;
+    if (this.provider === 'openrouter') {
+      baseUrl = 'https://openrouter.ai/api/v1';
+    } else if (this.provider === 'openai') {
+      baseUrl = 'https://api.openai.com/v1';
+    } else {
+      baseUrl = process.env.LLM_API_BASE_URL || 'https://openrouter.ai/api/v1';
+    }
 
+    logger.llm(`${this.provider} API call starting | model=${this.model} | prompt_chars=${promptLength}`);
+    
+    try {
       const response = await axios.post(
         `${baseUrl}/chat/completions`,
         {
@@ -112,9 +128,20 @@ class LLMService {
         }
       );
 
-      return response.data.choices[0].message.content;
+      const responseText = response.data.choices[0].message.content;
+      const elapsed = Date.now() - startTime;
+      const usage = response.data.usage;
+      
+      if (usage) {
+        logger.llm(`${this.provider} API call complete | response_chars=${responseText.length} | tokens_in=${usage.prompt_tokens} | tokens_out=${usage.completion_tokens} | time=${elapsed}ms`);
+      } else {
+        logger.llm(`${this.provider} API call complete | response_chars=${responseText.length} | time=${elapsed}ms`);
+      }
+
+      return responseText;
     } catch (error) {
-      logger.error('LLM API error:', error.response?.data || error.message);
+      const elapsed = Date.now() - startTime;
+      logger.llm(`${this.provider} API call FAILED | error=${error.response?.data?.error?.message || error.message} | time=${elapsed}ms`, 'ERROR');
       throw new Error('Failed to generate summary from LLM');
     }
   }

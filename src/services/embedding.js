@@ -17,11 +17,14 @@ class EmbeddingService {
    */
   async generateEmbeddings(input) {
     if (!this.apiKey) {
-      logger.warn('No embedding API key configured, skipping semantic search');
+      logger.embed('No API key configured, skipping embeddings', 'WARN');
       return null;
     }
 
     const texts = Array.isArray(input) ? input : [input];
+    const startTime = Date.now();
+
+    logger.embed(`Generating embeddings | model=${this.model} | texts=${texts.length}`);
 
     try {
       const response = await fetch(`${this.baseUrl}/embeddings`, {
@@ -40,14 +43,21 @@ class EmbeddingService {
 
       if (!response.ok) {
         const error = await response.text();
-        logger.error(`Embedding API error: ${response.status} - ${error}`);
+        const elapsed = Date.now() - startTime;
+        logger.embed(`Embeddings API FAILED | status=${response.status} | time=${elapsed}ms | error=${error}`, 'ERROR');
         return null;
       }
 
       const data = await response.json();
+      const elapsed = Date.now() - startTime;
+      const dimensions = data.data[0]?.embedding?.length || 0;
+      
+      logger.embed(`Embeddings generated | vectors=${data.data.length} | dimensions=${dimensions} | time=${elapsed}ms`);
+      
       return data.data.map(item => item.embedding);
     } catch (error) {
-      logger.error('Error generating embeddings:', error);
+      const elapsed = Date.now() - startTime;
+      logger.embed(`Embeddings API FAILED | error=${error.message} | time=${elapsed}ms`, 'ERROR');
       return null;
     }
   }
@@ -73,8 +83,12 @@ class EmbeddingService {
    */
   async generateRelatedTerms(query, count = 15) {
     if (!this.apiKey) {
+      logger.embed('No API key configured, using original query only', 'WARN');
       return [query];
     }
+
+    const startTime = Date.now();
+    logger.embed(`Generating related terms | query="${query}" | count=${count}`);
 
     try {
       // Use OpenRouter chat completion to generate related terms
@@ -105,7 +119,8 @@ class EmbeddingService {
 
       if (!response.ok) {
         const error = await response.text();
-        logger.error(`Related terms API error: ${response.status} - ${error}`);
+        const elapsed = Date.now() - startTime;
+        logger.embed(`Related terms API FAILED | status=${response.status} | time=${elapsed}ms`, 'ERROR');
         return [query];
       }
 
@@ -120,11 +135,15 @@ class EmbeddingService {
 
       // Always include the original query
       const uniqueTerms = [...new Set([query.toLowerCase(), ...terms])];
+      const elapsed = Date.now() - startTime;
       
-      logger.debug(`Generated ${uniqueTerms.length} search terms for "${query}": ${uniqueTerms.join(', ')}`);
+      logger.embed(`Related terms generated | query="${query}" | terms=${uniqueTerms.length} | time=${elapsed}ms`);
+      logger.embed(`Terms: ${uniqueTerms.join(', ')}`, 'DEBUG');
+      
       return uniqueTerms.slice(0, count + 1);
     } catch (error) {
-      logger.error('Error generating related terms:', error);
+      const elapsed = Date.now() - startTime;
+      logger.embed(`Related terms FAILED | error=${error.message} | time=${elapsed}ms`, 'ERROR');
       return [query];
     }
   }
@@ -140,6 +159,9 @@ class EmbeddingService {
     if (!this.apiKey || messages.length === 0) {
       return messages;
     }
+
+    const startTime = Date.now();
+    logger.embed(`Semantic search starting | query="${query}" | messages=${messages.length} | topK=${topK}`);
 
     try {
       // Generate embeddings for query and all messages
@@ -161,9 +183,18 @@ class EmbeddingService {
 
       // Sort by similarity and return top results
       scored.sort((a, b) => b.similarity - a.similarity);
-      return scored.slice(0, topK);
+      const results = scored.slice(0, topK);
+      const elapsed = Date.now() - startTime;
+      
+      const topScore = results[0]?.similarity?.toFixed(3) || 0;
+      const bottomScore = results[results.length - 1]?.similarity?.toFixed(3) || 0;
+      
+      logger.embed(`Semantic search complete | results=${results.length} | top_score=${topScore} | bottom_score=${bottomScore} | time=${elapsed}ms`);
+      
+      return results;
     } catch (error) {
-      logger.error('Error in semantic search:', error);
+      const elapsed = Date.now() - startTime;
+      logger.embed(`Semantic search FAILED | error=${error.message} | time=${elapsed}ms`, 'ERROR');
       return messages;
     }
   }

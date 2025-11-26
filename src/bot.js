@@ -195,11 +195,12 @@ async function handleSummaryCommand(message, channel, guildId, userId, channelId
   }
 
   const thinkingMsg = await message.reply('Starting summary... fetching messages...');
-  logger.info(`Starting summary request: mode=${summaryMode}, targetValue=${targetValue}, user=${message.author.tag}`);
+  logger.startOperation('SUMMARY', `mode=${summaryMode} | target=${targetValue} | user=${message.author.tag}`);
 
   const slot = await requestQueueService.requestSlot(channelId, userId);
   
   if (slot.queued) {
+    logger.queue(`Request queued | position=${slot.position} | user=${message.author.tag}`);
     await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
     await requestQueueService.waitForSlot(slot.requestId);
     await thinkingMsg.edit('Starting summary... fetching messages...');
@@ -217,7 +218,7 @@ async function handleSummaryCommand(message, channel, guildId, userId, channelId
       return;
     }
 
-    logger.info(`Summary created by ${message.author.tag} in ${message.guild.name}/#${channel.name} (mode: ${summaryMode})`);
+    logger.cmd(`Summary complete | user=${message.author.tag} | guild=${message.guild.name} | channel=${channel.name} | mode=${summaryMode}`);
   } catch (error) {
     requestQueueService.releaseSlot(slot.requestId);
     logger.error('Error generating summary:', error);
@@ -361,8 +362,11 @@ async function handleExplainCommand(message, channel, guildId, userId, channelId
 
 // Event: Bot is ready
 client.once('ready', async () => {
-  logger.info(`Logged in as ${client.user.tag}`);
-  logger.info(`Bot is active in ${client.guilds.cache.size} server(s)`);
+  logger.separator();
+  logger.bot(`Logged in as ${client.user.tag}`);
+  logger.bot(`Active in ${client.guilds.cache.size} server(s)`);
+  logger.bot(`LLM Provider: ${process.env.LLM_PROVIDER || 'google'} | Model: ${process.env.LLM_MODEL || 'gemini-2.0-flash-exp'}`);
+  logger.bot(`Embedding Model: ${process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'}`);
   
   // Register slash commands
   await registerCommands();
@@ -370,8 +374,9 @@ client.once('ready', async () => {
   // Start cache maintenance (cleanup old messages daily)
   messageCacheService.startMaintenanceSchedule();
   
-  logger.info('Bot is ready to summarise!');
-  logger.info('Commands: /summary, /catchup, /topic, /explain (also !prefix versions)');
+  logger.separator();
+  logger.bot('Bot is ready! Commands: /summary, /catchup, /topic, /explain (also !prefix versions)');
+  logger.separator();
 });
 
 // Event: Interaction created (slash commands)
@@ -381,14 +386,15 @@ client.on('interactionCreate', async (interaction) => {
   const command = commands.find(cmd => cmd.data.name === interaction.commandName);
 
   if (!command) {
-    logger.warn(`Unknown command: ${interaction.commandName}`);
+    logger.cmd(`Unknown command: ${interaction.commandName}`, 'WARN');
     return;
   }
 
   try {
+    logger.cmd(`/${interaction.commandName} | user=${interaction.user.tag} | guild=${interaction.guild?.name || 'DM'} | channel=${interaction.channel?.name || 'unknown'}`);
     await command.execute(interaction);
   } catch (error) {
-    logger.error(`Error executing ${interaction.commandName}:`, error);
+    logger.cmd(`/${interaction.commandName} FAILED | error=${error.message}`, 'ERROR');
     
     const errorMessage = 'There was an error executing this command.';
     if (interaction.replied || interaction.deferred) {

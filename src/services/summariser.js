@@ -345,7 +345,7 @@ class SummariserService {
         };
       }
 
-      logger.info(`Summarising ${messages.length} messages in channel ${channel.id} (mode: ${mode})`);
+      logger.cmd(`Summarising ${messages.length} messages | channel=${channel.id} | mode=${mode}`);
 
       // Get target username for user mode
       let targetUsername = null;
@@ -356,6 +356,7 @@ class SummariserService {
       // For large message counts, use hierarchical summarization
       let summaryText;
       if (mode === 'count' && messages.length > CHUNK_SIZE) {
+        logger.cmd(`Using hierarchical summarisation | messages=${messages.length} | chunk_size=${CHUNK_SIZE}`);
         summaryText = await this.hierarchicalSummarise(messages, editableMessage);
       } else {
         // Update progress if we have an editable message
@@ -363,30 +364,33 @@ class SummariserService {
           await this.updateProgress(editableMessage, `Generating summary for ${messages.length.toLocaleString()} messages...`, 0);
         }
         // Generate summary using LLM
+        logger.cmd(`Sending ${messages.length} messages to LLM for summarisation`);
         summaryText = await llmService.summariseMessages(messages, mode, targetUsername);
       }
 
       // Validate summary is not empty
       if (!summaryText || summaryText.trim().length === 0) {
-        logger.error('LLM returned empty summary');
+        logger.cmd('LLM returned empty summary', 'ERROR');
         return {
           success: false,
           error: 'Failed to generate summary - LLM returned empty response. Please try again.'
         };
       }
 
-      logger.debug(`Summary length: ${summaryText.length} characters`);
+      logger.cmd(`Summary generated | length=${summaryText.length} chars`);
 
       // Split summary if it exceeds Discord's 2000 character limit
       const summaryChunks = this.splitIntoChunks(summaryText, 2000);
       
-      logger.debug(`Split into ${summaryChunks.length} chunk(s)`);
+      if (summaryChunks.length > 1) {
+        logger.cmd(`Summary split into ${summaryChunks.length} Discord messages`);
+      }
       
       // Validate chunks are not empty
       const validChunks = summaryChunks.filter(chunk => chunk && chunk.trim().length > 0);
       
       if (validChunks.length === 0) {
-        logger.error('All chunks are empty after splitting');
+        logger.cmd('All chunks are empty after splitting', 'ERROR');
         return {
           success: false,
           error: 'Failed to generate summary - splitting resulted in empty chunks. Please try again.'
@@ -639,13 +643,15 @@ class SummariserService {
    */
   async generateTopicSummary(channel, guildId, botUserId, keyword, limit, editableMessage = null, requesterId = null) {
     try {
+      logger.startOperation('TOPIC SEARCH', `keyword="${keyword}"`);
+      
       if (editableMessage) {
         await this.updateProgress(editableMessage, `Generating related search terms for "${keyword}"...`, 0);
       }
 
       // Generate 15 related search terms using embeddings
       const searchTerms = await embeddingService.generateRelatedTerms(keyword, 15);
-      logger.info(`Searching for topic "${keyword}" with terms: ${searchTerms.join(', ')}`);
+      logger.cmd(`Topic search | keyword="${keyword}" | related_terms=${searchTerms.length}`);
 
       // Search for messages containing any of the search terms
       let allMatches = [];
@@ -660,6 +666,8 @@ class SummariserService {
           }
         }
       }
+
+      logger.cache(`Topic search found ${allMatches.length} unique messages from ${searchTerms.length} terms`);
 
       // Sort by timestamp
       allMatches.sort((a, b) => a.created_at - b.created_at);
@@ -740,13 +748,15 @@ class SummariserService {
    */
   async generateExplanation(channel, guildId, botUserId, topic, depth, editableMessage = null, requesterId = null) {
     try {
+      logger.startOperation('EXPLAIN', `topic="${topic}"`);
+      
       if (editableMessage) {
         await this.updateProgress(editableMessage, `Generating related search terms for "${topic}"...`, 0);
       }
 
       // Generate 15 related search terms using embeddings
       const searchTerms = await embeddingService.generateRelatedTerms(topic, 15);
-      logger.info(`Searching for explanation of "${topic}" with terms: ${searchTerms.join(', ')}`);
+      logger.cmd(`Explain search | topic="${topic}" | related_terms=${searchTerms.length}`);
 
       // Search for messages containing any of the search terms
       let allMatches = [];
@@ -761,6 +771,8 @@ class SummariserService {
           }
         }
       }
+
+      logger.cache(`Explain search found ${allMatches.length} unique messages from ${searchTerms.length} terms`);
 
       // Sort by timestamp
       allMatches.sort((a, b) => a.created_at - b.created_at);
