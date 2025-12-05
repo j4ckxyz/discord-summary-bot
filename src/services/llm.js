@@ -547,12 +547,69 @@ RULES:
   }
 
   /**
+   * Analyze messages to find when people are free
+   * @param {Array} messages - Array of message objects
+   * @returns {Promise<string>} - Analysis text
+   */
+  async analyzeAvailability(messages) {
+    const userMap = this.buildUserMap(messages);
+    const now = new Date();
+    const dateContext = `${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
+
+    // Use Pro model if available, otherwise default
+    const originalModel = this.model;
+    if (process.env.LLM_MODEL_PRO) {
+      this.model = process.env.LLM_MODEL_PRO;
+    }
+
+    const formattedMessages = messages
+      .map(msg => `[${msg.timestamp}] ${msg.author}: ${msg.content}`)
+      .join('\n');
+
+    const systemPrompt = `You are a helpful assistant analyzing a group chat to find when people are free.
+Current Date: ${dateContext}
+
+Your goal is to identify:
+1. Who expressed availability for specific days/times.
+2. Who expressed unavailability.
+3. Common overlaps where multiple people are free.
+
+Output format:
+**Potential Times:**
+- **[Day/Time]**: User A, User B, User C (Note: "User D can't")
+- ...
+
+**Details:**
+- [User]: Said "Quote about time"
+- ...
+
+Keep it concise. If no one mentioned availability, say "No availability discussions found."`;
+
+    const userPrompt = `Analyze these messages for availability:\n\n${formattedMessages}`;
+
+    try {
+      const result = await this.generateCompletion(systemPrompt, userPrompt);
+      // Restore model
+      this.model = originalModel;
+      return this.replaceUsernamesWithMentions(result, userMap);
+    } catch (e) {
+      this.model = originalModel;
+      throw e;
+    }
+  }
+
+  /**
    * Parse a natural language date/time string into an ISO timestamp
    * @param {string} input - The natural language input (e.g., "tomorrow at 5pm", "in 2 hours")
    * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid
    */
   async parseTime(input) {
     const now = new Date();
+    // Weekday, Month Day, Year format (e.g., "Friday, December 8, 2023")
+    const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const dateString = now.toLocaleDateString('en-US', dateOptions);
+    const timeString = now.toLocaleTimeString('en-US', { hour12: false }); // 24hr format
+
     const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
     
 Rules:
@@ -561,9 +618,11 @@ Rules:
 3. If the input is relative (e.g., "in 5 mins"), calculate the time from the "Current Reference Time".
 4. If the input assumes a timezone but doesn't specify it, assume the same timezone as the reference time.
 5. If the date is missing (e.g., "at 5pm"), assume the next occurrence of that time (today or tomorrow).
-6. If the input is invalid or cannot be parsed as a time, return the string "null".`;
+6. BE CAREFUL WITH DAYS: If today is Friday and input is "Sunday", that is 2 days from now.
+7. If the input is invalid or cannot be parsed as a time, return the string "null".`;
 
-    const userPrompt = `Current Reference Time: ${now.toString()} (${now.toISOString()})
+    const userPrompt = `Current Reference Time: ${dateString} ${timeString}
+ISO Format: ${now.toISOString()}
 Input to parse: "${input}"
 
 Target ISO Timestamp:`;

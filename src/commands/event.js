@@ -1,9 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { EventModel, SettingsModel } from '../database/models.js';
 import { parseTime } from '../utils/timeParser.js';
 
 export default {
     data: new SlashCommandBuilder()
+        // ... (subcommand config remains same)
         .setName('event')
         .setDescription('Manage channel events')
         .addSubcommand(subcommand =>
@@ -68,9 +69,28 @@ export default {
                 return interaction.editReply({ content: `❌ This channel has reached the limit of ${settings.max_events} upcoming events.` });
             }
 
-            EventModel.createEvent(guildId, channelId, userId, name, description, time);
+            const result = EventModel.createEvent(guildId, channelId, userId, name, description, time);
+            const eventId = result.lastInsertRowid; // Use ID from result for buttons
+
             const dateStr = new Date(time * 1000).toLocaleString();
-            return interaction.editReply(`📅 Created event **${name}** for ${dateStr}. \n${description}`);
+
+            // Create Buttons
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`event_join_${eventId}`)
+                        .setLabel('Join')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`event_leave_${eventId}`)
+                        .setLabel('Leave')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+            return interaction.editReply({
+                content: `📅 **Event Created!**\n**${name}**\nTime: ${dateStr}\n${description}`,
+                components: [row]
+            });
         }
 
         if (subcommand === 'list') {

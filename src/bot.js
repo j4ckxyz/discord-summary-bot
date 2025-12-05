@@ -13,6 +13,7 @@ import configCommand from './commands/config.js';
 import pollCommand from './commands/poll.js';
 import timerCommand from './commands/timer.js';
 import funCommand from './commands/fun.js';
+import freesCommand from './commands/frees.js';
 import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
@@ -56,7 +57,8 @@ const commands = [
   configCommand,
   pollCommand,
   timerCommand,
-  funCommand
+  funCommand,
+  freesCommand
 ];
 
 // Register slash commands
@@ -426,8 +428,50 @@ client.once('ready', async () => {
   logger.separator();
 });
 
-// Event: Interaction created (slash commands)
+// Event: Interaction created (slash commands and buttons)
 client.on('interactionCreate', async (interaction) => {
+  // Handle Buttons
+  if (interaction.isButton()) {
+    const customId = interaction.customId;
+
+    if (customId.startsWith('event_join_')) {
+      const eventId = customId.replace('event_join_', '');
+      // Since we can't easily import EventModel here without circular deps if not careful (though defined above),
+      // or we just use the imported Model if it's available.
+      // Note: we haven't imported EventModel here yet. Need to add import!
+      // But wait, importing models.js is fine.
+
+      try {
+        // Dynamic import or ensure import at top. 
+        // Models are usually safe to import.
+        const { EventModel } = await import('./database/models.js');
+
+        const res = EventModel.addAttendee(eventId, interaction.user.id);
+        if (res === false) return interaction.reply({ content: '❌ Event not found or expired.', ephemeral: true });
+        if (res.changes === 0) return interaction.reply({ content: '⚠️ You are already attending.', ephemeral: true });
+
+        return interaction.reply({ content: '✅ You joined the event!', ephemeral: true });
+      } catch (e) {
+        logger.error('Button error', e);
+        return interaction.reply({ content: '❌ Error joining event.', ephemeral: true });
+      }
+    }
+
+    if (customId.startsWith('event_leave_')) {
+      const eventId = customId.replace('event_leave_', '');
+      try {
+        const { EventModel } = await import('./database/models.js');
+        const res = EventModel.removeAttendee(eventId, interaction.user.id);
+        if (res === false) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+
+        return interaction.reply({ content: '👋 You left the event.', ephemeral: true });
+      } catch (e) {
+        return interaction.reply({ content: '❌ Error leaving.', ephemeral: true });
+      }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commands.find(cmd => cmd.data.name === interaction.commandName);
