@@ -7,8 +7,7 @@ import topicCommand from './commands/topic.js';
 import explainCommand from './commands/explain.js';
 import remindCommand from './commands/remind.js';
 import todoCommand from './commands/todo.js';
-import remindCommand from './commands/remind.js';
-import todoCommand from './commands/todo.js';
+
 import eventCommand from './commands/event.js';
 import configCommand from './commands/config.js';
 import pollCommand from './commands/poll.js';
