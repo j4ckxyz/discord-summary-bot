@@ -41,6 +41,31 @@ export default {
                 .addIntegerOption(option =>
                     option.setName('id')
                         .setDescription('The ID of the event')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('edit')
+                .setDescription('Edit an event')
+                .addIntegerOption(option =>
+                    option.setName('id')
+                        .setDescription('Event ID')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('New name'))
+                .addStringOption(option =>
+                    option.setName('time')
+                        .setDescription('New time'))
+                .addStringOption(option =>
+                    option.setName('description')
+                        .setDescription('New description')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('delete')
+                .setDescription('Cancel an event')
+                .addIntegerOption(option =>
+                    option.setName('id')
+                        .setDescription('Event ID')
                         .setRequired(true))),
 
     async execute(interaction) {
@@ -125,6 +150,50 @@ export default {
             if (res === false) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
 
             return interaction.reply(`👋 Left event #${id}.`);
+        }
+
+        if (subcommand === 'delete') {
+            const id = interaction.options.getInteger('id');
+            const event = EventModel.getEvent(id);
+
+            if (!event) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+
+            const member = await interaction.guild.members.fetch(userId);
+            const isAdmin = member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+
+            if (event.creator_id !== userId && !isAdmin) {
+                return interaction.reply({ content: '❌ You can only delete events you created.', ephemeral: true });
+            }
+
+            EventModel.deleteEvent(id);
+            return interaction.reply(`🗑️ Event #${id} has been cancelled.`);
+        }
+
+        if (subcommand === 'edit') {
+            const id = interaction.options.getInteger('id');
+            const name = interaction.options.getString('name');
+            const timeStr = interaction.options.getString('time');
+            const description = interaction.options.getString('description');
+
+            const event = EventModel.getEvent(id);
+            if (!event) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+
+            const member = await interaction.guild.members.fetch(userId);
+            const isAdmin = member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+
+            if (event.creator_id !== userId && !isAdmin) {
+                return interaction.reply({ content: '❌ You can only edit events you created.', ephemeral: true });
+            }
+
+            let newTime = event.time;
+            if (timeStr) {
+                const parsed = await parseTime(timeStr);
+                if (!parsed) return interaction.reply({ content: `❌ Could not understand time "${timeStr}".`, ephemeral: true });
+                newTime = parsed;
+            }
+
+            EventModel.updateEvent(id, name, description, newTime);
+            return interaction.reply(`✅ Event #${id} updated.`);
         }
     },
 

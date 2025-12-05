@@ -396,6 +396,30 @@ export const ReminderModel = {
     return stmt.run(id, userId);
   },
 
+  deleteReminderForce(id) {
+    const stmt = db.prepare(`
+        DELETE FROM reminders WHERE id = ?
+    `);
+    return stmt.run(id);
+  },
+
+  getReminder(id) {
+    const stmt = db.prepare('SELECT * FROM reminders WHERE id = ?');
+    return stmt.get(id);
+  },
+
+  updateReminder(id, message, time) {
+    // Only update fields if provided (though calling code usually provides all)
+    const stmt = db.prepare(`
+        UPDATE reminders 
+        SET message = COALESCE(?, message), 
+            time = COALESCE(?, time),
+            completed = 0
+        WHERE id = ?
+      `);
+    return stmt.run(message, time, id);
+  },
+
   // Clean up old completed reminders (optional maintenance)
   cleanupCompletedReminders(daysToKeep = 7) {
     const now = Math.floor(Date.now() / 1000);
@@ -504,6 +528,22 @@ export const EventModel = {
   deleteEvent(id) {
     const stmt = db.prepare('DELETE FROM events WHERE id = ?');
     return stmt.run(id);
+  },
+
+  getEvent(id) {
+    const stmt = db.prepare('SELECT * FROM events WHERE id = ?');
+    return stmt.get(id);
+  },
+
+  updateEvent(id, name, description, time) {
+    const stmt = db.prepare(`
+        UPDATE events 
+        SET name = COALESCE(?, name), 
+            description = COALESCE(?, description),
+            time = COALESCE(?, time)
+        WHERE id = ?
+      `);
+    return stmt.run(name, description, time, id);
   },
 
   getDueEvents(timeWindowMinutes = 15) {

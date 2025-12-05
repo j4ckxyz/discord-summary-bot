@@ -41,7 +41,21 @@ export default {
                 .addIntegerOption(option =>
                     option.setName('id')
                         .setDescription('Reminder ID')
-                        .setRequired(true))),
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('edit')
+                .setDescription('Edit a reminder')
+                .addIntegerOption(option =>
+                    option.setName('id')
+                        .setDescription('Reminder ID')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('time')
+                        .setDescription('New time (optional)'))
+                .addStringOption(option =>
+                    option.setName('message')
+                        .setDescription('New message (optional)'))),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
@@ -91,13 +105,54 @@ export default {
 
         if (subcommand === 'delete') {
             const id = interaction.options.getInteger('id');
-            const res = ReminderModel.deleteReminder(id, userId);
+            const reminder = ReminderModel.getReminder(id);
 
-            if (res.changes === 0) {
-                return interaction.reply({ content: `❌ Reminder #${id} not found or doesn't belong to you.`, ephemeral: true });
+            if (!reminder) {
+                return interaction.reply({ content: `❌ Reminder #${id} not found.`, ephemeral: true });
             }
 
+            // Permission Check: Owner or Admin
+            const member = await interaction.guild.members.fetch(userId);
+            const isAdmin = member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+
+            if (reminder.user_id !== userId && !isAdmin) {
+                return interaction.reply({ content: `❌ You can only delete your own reminders.`, ephemeral: true });
+            }
+
+            ReminderModel.deleteReminderForce(id);
             return interaction.reply({ content: `🗑️ Deleted reminder #${id}.`, ephemeral: true });
+        }
+
+        if (subcommand === 'edit') {
+            const id = interaction.options.getInteger('id');
+            const timeStr = interaction.options.getString('time');
+            const message = interaction.options.getString('message');
+
+            const reminder = ReminderModel.getReminder(id);
+
+            if (!reminder) {
+                return interaction.reply({ content: `❌ Reminder #${id} not found.`, ephemeral: true });
+            }
+
+            // Permission Check
+            const member = await interaction.guild.members.fetch(userId);
+            const isAdmin = member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+
+            if (reminder.user_id !== userId && !isAdmin) {
+                return interaction.reply({ content: `❌ You can only edit your own reminders.`, ephemeral: true });
+            }
+
+            let newTime = reminder.time;
+            if (timeStr) {
+                const parsed = await parseTime(timeStr);
+                if (!parsed) {
+                    return interaction.reply({ content: `❌ Could not understand time "${timeStr}".`, ephemeral: true });
+                }
+                newTime = parsed;
+            }
+
+            ReminderModel.updateReminder(id, message || reminder.message, newTime);
+            return interaction.reply({ content: `✅ Updated reminder #${id}.` });
         }
     },
 
