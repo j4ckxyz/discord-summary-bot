@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { EventModel, SettingsModel } from '../database/models.js';
+import { parseTime } from '../utils/timeParser.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -15,7 +16,7 @@ export default {
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('time')
-                        .setDescription('Time (e.g. "tomorrow 8pm", "in 2h")')
+                        .setDescription('Time (e.g. "tomorrow 8pm", "in 2h", "Sunday 5pm")')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('description')
@@ -48,26 +49,28 @@ export default {
         const userId = interaction.user.id;
 
         if (subcommand === 'create') {
+            await interaction.deferReply();
             const name = interaction.options.getString('name');
             const timeStr = interaction.options.getString('time');
             const description = interaction.options.getString('description') || '';
 
             // Simple relative parse or fallback
-            let time = parseTime(timeStr);
+            // Now using intelligent async parser
+            let time = await parseTime(timeStr);
             if (!time) {
-                return interaction.reply({ content: `❌ Could not understand time "${timeStr}". Try "in 5m", "tomorrow", etc.`, ephemeral: true });
+                return interaction.editReply({ content: `❌ Could not understand time "${timeStr}". Try "in 5m", "tomorrow", "Friday at 8pm" etc.` });
             }
 
             // Check limit
             const settings = SettingsModel.getSettings(guildId);
             const events = EventModel.getChannelEvents(guildId, channelId);
             if (events.length >= settings.max_events) {
-                return interaction.reply({ content: `❌ This channel has reached the limit of ${settings.max_events} upcoming events.`, ephemeral: true });
+                return interaction.editReply({ content: `❌ This channel has reached the limit of ${settings.max_events} upcoming events.` });
             }
 
             EventModel.createEvent(guildId, channelId, userId, name, description, time);
             const dateStr = new Date(time * 1000).toLocaleString();
-            return interaction.reply(`📅 Created event **${name}** for ${dateStr}. \n${description}`);
+            return interaction.editReply(`📅 Created event **${name}** for ${dateStr}. \n${description}`);
         }
 
         if (subcommand === 'list') {
@@ -122,33 +125,3 @@ export default {
         // Support other commands as needed
     }
 };
-
-// Simple relative time parser helper
-function parseTime(input) {
-    const now = Date.now();
-    const str = input.toLowerCase();
-
-    // "in X m/h/d"
-    const regex = /in\s+(\d+)\s*(m|h|d|min|mins|hour|hours|day|days)/;
-    const match = str.match(regex);
-    if (match) {
-        const amount = parseInt(match[1]);
-        const unit = match[2];
-        let ms = 0;
-        if (unit.startsWith('m')) ms = amount * 60 * 1000;
-        else if (unit.startsWith('h')) ms = amount * 60 * 60 * 1000;
-        else if (unit.startsWith('d')) ms = amount * 24 * 60 * 60 * 1000;
-
-        return Math.floor((now + ms) / 1000);
-    }
-
-    // "tomorrow"
-    if (str.includes('tomorrow')) {
-        const d = new Date(now);
-        d.setDate(d.getDate() + 1);
-        d.setHours(9, 0, 0, 0); // Default 9am
-        return Math.floor(d.getTime() / 1000);
-    }
-
-    return null;
-}

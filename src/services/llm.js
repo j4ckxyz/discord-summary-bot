@@ -8,7 +8,7 @@ class LLMService {
     this.apiKey = process.env.LLM_API_KEY;
     this.provider = process.env.LLM_PROVIDER || 'google';
     this.model = process.env.LLM_MODEL || 'gemini-2.0-flash-exp';
-    
+
     if (!this.apiKey) {
       throw new Error('LLM_API_KEY environment variable is required');
     }
@@ -28,9 +28,9 @@ class LLMService {
   async generateGeminiCompletion(systemPrompt, userPrompt) {
     const startTime = Date.now();
     const promptLength = systemPrompt.length + userPrompt.length;
-    
+
     logger.llm(`Gemini API call starting | model=${this.model} | prompt_chars=${promptLength}`);
-    
+
     try {
       // Configure safety settings to be permissive for chat summarization
       // Discord chats may contain mature language that shouldn't block summarization
@@ -53,7 +53,7 @@ class LLMService {
         },
       ];
 
-      const model = this.geminiClient.getGenerativeModel({ 
+      const model = this.geminiClient.getGenerativeModel({
         model: this.model,
         systemInstruction: systemPrompt,
         safetySettings
@@ -61,7 +61,7 @@ class LLMService {
 
       const result = await model.generateContent(userPrompt);
       const response = await result.response;
-      
+
       // Check if the response was blocked
       if (!response.text) {
         const blockReason = response.promptFeedback?.blockReason;
@@ -71,12 +71,12 @@ class LLMService {
         }
         throw new Error('Empty response from Gemini');
       }
-      
+
       const responseText = response.text();
       const elapsed = Date.now() - startTime;
-      
+
       logger.llm(`Gemini API call complete | response_chars=${responseText.length} | time=${elapsed}ms`);
-      
+
       return responseText;
     } catch (error) {
       const elapsed = Date.now() - startTime;
@@ -94,7 +94,7 @@ class LLMService {
   async generateOpenAICompletion(systemPrompt, userPrompt) {
     const startTime = Date.now();
     const promptLength = systemPrompt.length + userPrompt.length;
-    
+
     let baseUrl;
     if (this.provider === 'openrouter') {
       baseUrl = 'https://openrouter.ai/api/v1';
@@ -105,7 +105,7 @@ class LLMService {
     }
 
     logger.llm(`${this.provider} API call starting | model=${this.model} | prompt_chars=${promptLength}`);
-    
+
     try {
       const response = await axios.post(
         `${baseUrl}/chat/completions`,
@@ -131,7 +131,7 @@ class LLMService {
       const responseText = response.data.choices[0].message.content;
       const elapsed = Date.now() - startTime;
       const usage = response.data.usage;
-      
+
       if (usage) {
         logger.llm(`${this.provider} API call complete | response_chars=${responseText.length} | tokens_in=${usage.prompt_tokens} | tokens_out=${usage.completion_tokens} | time=${elapsed}ms`);
       } else {
@@ -170,14 +170,14 @@ class LLMService {
   async summariseMessages(messages, mode = 'default', targetUsername = null) {
     // Build username -> userId map for mentions
     const userMap = this.buildUserMap(messages);
-    
+
     // Use topic-based format for large message counts (>100 messages)
     const useTopicFormat = mode === 'count' && messages.length > 100;
-    
-    const systemPrompt = useTopicFormat 
+
+    const systemPrompt = useTopicFormat
       ? this.getTopicBasedSystemPrompt()
       : config.summaryPrompt;
-    
+
     // Format messages for the LLM with reply chain information
     const formattedMessages = messages
       .map(msg => {
@@ -190,7 +190,7 @@ class LLMService {
       .join('\n');
 
     let userPrompt;
-    
+
     if (mode === 'user' && targetUsername) {
       // User-specific summary: focus only on what the target user said
       userPrompt = `Messages from ${targetUsername}:\n\n${formattedMessages}\n\nProvide a neutral summary of what ${targetUsername} discussed in their 50 most recent messages. Focus ONLY on ${targetUsername}'s contributions. Only mention other users if they are directly relevant to what ${targetUsername} said (e.g., if ${targetUsername} replied to them or discussed them). The summary must be ${config.maxSummaryLength} characters or less and must not end abruptly or be cut off.`;
@@ -224,26 +224,26 @@ Example format:
     }
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
-    
+
     logger.debug(`LLM returned summary of ${summary.length} characters`);
-    
+
     // For topic format, don't enforce character limit, just replace usernames with mentions
     if (useTopicFormat) {
       return this.replaceUsernamesWithMentions(summary.trim(), userMap);
     }
-    
+
     // Ensure summary doesn't exceed max length and doesn't end with trailing dots
     let trimmedSummary = summary.trim();
-    
+
     if (trimmedSummary.length > config.maxSummaryLength) {
       // Find the last complete sentence within the limit
       const withinLimit = trimmedSummary.substring(0, config.maxSummaryLength);
       const lastPeriod = withinLimit.lastIndexOf('.');
       const lastExclamation = withinLimit.lastIndexOf('!');
       const lastQuestion = withinLimit.lastIndexOf('?');
-      
+
       const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
-      
+
       if (lastSentenceEnd > config.maxSummaryLength * 0.7) {
         // If we can find a sentence ending in the last 30% of the limit, use it
         trimmedSummary = withinLimit.substring(0, lastSentenceEnd + 1);
@@ -257,7 +257,7 @@ Example format:
         }
       }
     }
-    
+
     // Replace usernames with Discord mentions
     return this.replaceUsernamesWithMentions(trimmedSummary, userMap);
   }
@@ -288,31 +288,31 @@ Example format:
    */
   replaceUsernamesWithMentions(text, userMap) {
     let result = text;
-    
+
     // Sort by username length (longest first) to avoid partial replacements
     const sortedUsers = [...userMap.entries()].sort((a, b) => b[0].length - a[0].length);
-    
+
     for (const [username, userData] of sortedUsers) {
       // Format: DisplayName (@username)
-      const displayFormat = userData.displayName !== username 
+      const displayFormat = userData.displayName !== username
         ? `${userData.displayName} (@${username})`
         : `@${username}`;
-      
+
       // Match username as a whole word (case-insensitive)
       const regex = new RegExp(`(?<!<@|<@!|/|@)\\b${this.escapeRegex(username)}\\b(?!'s\\b)`, 'gi');
       result = result.replace(regex, displayFormat);
     }
-    
+
     // Also handle possessives like "username's" -> "DisplayName (@username)'s"
     for (const [username, userData] of sortedUsers) {
-      const displayFormat = userData.displayName !== username 
+      const displayFormat = userData.displayName !== username
         ? `${userData.displayName} (@${username})`
         : `@${username}`;
-      
+
       const possessiveRegex = new RegExp(`(?<!<@|<@!|/|@)\\b${this.escapeRegex(username)}'s\\b`, 'gi');
       result = result.replace(possessiveRegex, `${displayFormat}'s`);
     }
-    
+
     return result;
   }
 
@@ -380,7 +380,7 @@ Create a DETAILED summary of this chunk. Requirements:
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     logger.debug(`Chunk ${chunkIndex} summary: ${summary.length} characters`);
-    
+
     return summary.trim();
   }
 
@@ -401,7 +401,7 @@ CRITICAL REQUIREMENTS:
 - The final summary should be comprehensive and informative
 - Organize by topic, with the most active/important topics first`;
 
-    const summariesText = chunkSummaries.map(chunk => 
+    const summariesText = chunkSummaries.map(chunk =>
       `=== Chunk ${chunk.index} (${chunk.startTime} - ${chunk.endTime}, ${chunk.messageCount} messages) ===\n${chunk.summary}`
     ).join('\n\n');
 
@@ -423,7 +423,7 @@ Create a COMPREHENSIVE final summary that:
 
     const summary = await this.generateCompletion(systemPrompt, userPrompt);
     logger.debug(`Final combined summary: ${summary.length} characters`);
-    
+
     return summary.trim();
   }
 
@@ -436,7 +436,7 @@ Create a COMPREHENSIVE final summary that:
    */
   async summariseCatchup(messages, mentionedMessages, requesterId) {
     const userMap = this.buildUserMap(messages);
-    
+
     const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis. Use quotes sparingly for important statements only.`;
 
     const formattedMessages = messages
@@ -474,7 +474,7 @@ RULES:
    */
   async summariseTopic(messages, keyword, searchTerms = null) {
     const userMap = this.buildUserMap(messages);
-    
+
     const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis. Use quotes for important statements.`;
 
     const formattedMessages = messages
@@ -515,7 +515,7 @@ RULES:
    */
   async generateExplanation(messages, topic, searchTerms = null) {
     const userMap = this.buildUserMap(messages);
-    
+
     const systemPrompt = `You are a neutral, concise summariser. Write in clear British English. Be factual and objective. No slang, no casual language, no emojis.`;
 
     const formattedMessages = messages
@@ -544,6 +544,50 @@ RULES:
 
     const explanation = await this.generateCompletion(systemPrompt, userPrompt);
     return this.replaceUsernamesWithMentions(explanation.trim(), userMap);
+  }
+
+  /**
+   * Parse a natural language date/time string into an ISO timestamp
+   * @param {string} input - The natural language input (e.g., "tomorrow at 5pm", "in 2 hours")
+   * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid
+   */
+  async parseTime(input) {
+    const now = new Date();
+    const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
+    
+Rules:
+1. Return ONLY the ISO 8601 string (e.g., "2023-12-25T15:00:00.000Z").
+2. No JSON, no markdown, no explanation. Just the string.
+3. If the input is relative (e.g., "in 5 mins"), calculate the time from the "Current Reference Time".
+4. If the input assumes a timezone but doesn't specify it, assume the same timezone as the reference time.
+5. If the date is missing (e.g., "at 5pm"), assume the next occurrence of that time (today or tomorrow).
+6. If the input is invalid or cannot be parsed as a time, return the string "null".`;
+
+    const userPrompt = `Current Reference Time: ${now.toString()} (${now.toISOString()})
+Input to parse: "${input}"
+
+Target ISO Timestamp:`;
+
+    try {
+      let result = await this.generateCompletion(systemPrompt, userPrompt);
+      result = result.trim().replace(/['"`]/g, ''); // Clean up quotes
+
+      if (result.toLowerCase() === 'null') {
+        return null;
+      }
+
+      // Validate it's a real date
+      const date = new Date(result);
+      if (isNaN(date.getTime())) {
+        logger.warn(`LLM returned invalid date: ${result}`);
+        return null;
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Error parsing time with LLM:', error);
+      return null;
+    }
   }
 }
 

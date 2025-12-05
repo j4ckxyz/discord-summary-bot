@@ -1,7 +1,10 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { ReminderModel, SettingsModel } from '../database/models.js';
+import { parseTime } from '../utils/timeParser.js';
 
 export default {
+    // ... (rest of the file remains same, execute method already calls await parseTime)
+
     data: new SlashCommandBuilder()
         .setName('remind')
         .setDescription('Set a reminder')
@@ -11,7 +14,7 @@ export default {
                 .setDescription('Remind me about something')
                 .addStringOption(option =>
                     option.setName('time')
-                        .setDescription('When to remind you (e.g. "in 5m", "tomorrow")')
+                        .setDescription('When to remind you (e.g. "in 5m", "tomorrow", "Sunday at 5pm")')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('message')
@@ -37,23 +40,24 @@ export default {
         const userId = interaction.user.id;
 
         if (subcommand === 'me') {
+            await interaction.deferReply(); // Defer because LLM might take a second
             const timeStr = interaction.options.getString('time');
             const message = interaction.options.getString('message');
 
-            const time = parseTime(timeStr);
+            const time = await parseTime(timeStr);
             if (!time) {
-                return interaction.reply({ content: `❌ Could not understand time "${timeStr}". Try "in 5m", "tomorrow", etc.`, ephemeral: true });
+                return interaction.editReply({ content: `❌ Could not understand time "${timeStr}". Try "in 5m", "tomorrow", or "Sunday at 5pm".` });
             }
 
             // check limit
             const settings = SettingsModel.getSettings(guildId);
             const userReminders = ReminderModel.getUserReminders(userId, guildId);
             if (userReminders.length >= settings.max_reminders) {
-                return interaction.reply({ content: `❌ You have reached the limit of ${settings.max_reminders} active reminders in this server.`, ephemeral: true });
+                return interaction.editReply({ content: `❌ You have reached the limit of ${settings.max_reminders} active reminders in this server.` });
             }
 
             ReminderModel.createReminder(userId, guildId, channelId, message, time);
-            return interaction.reply(`⏰ I'll remind you to **${message}** <t:${time}:R>!`);
+            return interaction.editReply(`⏰ I'll remind you to **${message}** <t:${time}:R>!`);
         }
 
         if (subcommand === 'list') {
@@ -97,10 +101,30 @@ export default {
         // Default to "remind me" logic: !remindme 10m Check oven
         // We assume the first arg is time if it looks like it
         const timeStr = args[0];
-        const time = parseTime(timeStr);
+        let time = await parseTime(timeStr);
+        let reminderMsg;
 
         if (time) {
-            const reminderMsg = args.slice(1).join(' ');
+            reminderMsg = args.slice(1).join(' ');
+        } else {
+            // Try first 2 words: "in 20m" or "next friday"
+            const timeStr2 = args.slice(0, 2).join(' ');
+            const time2 = await parseTime(timeStr2);
+            if (time2) {
+                time = time2;
+                reminderMsg = args.slice(2).join(' ');
+            } else {
+                // Try first 3 words: "next friday at 5pm"
+                const timeStr3 = args.slice(0, 3).join(' ');
+                const time3 = await parseTime(timeStr3);
+                if (time3) {
+                    time = time3;
+                    reminderMsg = args.slice(3).join(' ');
+                }
+            }
+        }
+
+        if (time) {
             if (!reminderMsg) return message.reply('Please provide a message for the reminder.');
 
             // check limit
@@ -113,26 +137,18 @@ export default {
             ReminderModel.createReminder(message.author.id, message.guild.id, message.channel.id, reminderMsg, time);
             return message.reply(`⏰ I'll remind you to **${reminderMsg}** <t:${time}:R>!`);
         } else {
-            // Maybe complex parsing "in 5 minutes" where "in" is args[0]
-            // Simple fallback: try to join first 2 args
-            const timeStr2 = args.slice(0, 2).join(' ');
-            const time2 = parseTime(timeStr2);
-            if (time2) {
-                const reminderMsg = args.slice(2).join(' ');
-                if (!reminderMsg) return message.reply('Please provide a message for the reminder.');
-                ReminderModel.createReminder(message.author.id, message.guild.id, message.channel.id, reminderMsg, time2);
-                return message.reply(`⏰ I'll remind you to **${reminderMsg}** <t:${time2}:R>!`);
-            }
-
-            return message.reply(`❌ Could not understand time. Try "10m", "in 1h", "tomorrow".`);
+            return message.reply(`❌ Could not understand time. Try "10m", "in 1h", "tomorrow", or "Sunday at 5pm".`);
         }
     }
 };
 
-// Reused simple time parser (could be shared utility)
-function parseTime(input) {
+// Intelligent time parser with LLM + Regex fallback
+async function parseTime(input) {
+    if (!input) return null;
     const now = Date.now();
     const str = input.toLowerCase();
+
+    // 1. FAST PATH: Simple Regex for common cases (to save LLM tokens/time)
 
     // "10m", "1h"
     const simpleRegex = /^(\d+)(m|h|d|s)$/;
@@ -149,7 +165,7 @@ function parseTime(input) {
     }
 
     // "in X m/h/d"
-    const regex = /in\s+(\d+)\s*(m|h|d|min|mins|hour|hours|day|days)/;
+    const regex = /^in\s+(\d+)\s*(m|h|d|min|mins|hour|hours|day|days)$/;
     const match = str.match(regex);
     if (match) {
         const amount = parseInt(match[1]);
@@ -162,13 +178,24 @@ function parseTime(input) {
         return Math.floor((now + ms) / 1000);
     }
 
-    // "tomorrow"
-    if (str.includes('tomorrow')) {
+    // "tomorrow" (simple case)
+    if (str === 'tomorrow') {
         const d = new Date(now);
         d.setDate(d.getDate() + 1);
         d.setHours(9, 0, 0, 0); // Default 9am
         return Math.floor(d.getTime() / 1000);
     }
 
+    // 2. INTELLIGENT PATH: Use LLM for everything else ("next friday", "sunday at 5pm")
+    try {
+        const isoString = await llmService.parseTime(input);
+        if (isoString) {
+            return Math.floor(new Date(isoString).getTime() / 1000);
+        }
+    } catch (e) {
+        console.error("LLM time parse failed, falling back", e);
+    }
+
+    // Fallback: if LLM fails, return null
     return null;
 }
