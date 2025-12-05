@@ -49,8 +49,7 @@ const commands = [
   explainCommand,
   remindCommand,
   todoCommand,
-  remindCommand,
-  todoCommand,
+
   eventCommand,
   configCommand,
   pollCommand
