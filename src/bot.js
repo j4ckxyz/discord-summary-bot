@@ -412,7 +412,7 @@ client.once('ready', async () => {
   messageCacheService.startMaintenanceSchedule();
 
   logger.separator();
-  logger.bot('Bot is ready! Commands: /summary, /catchup, /topic, /explain (also !prefix versions)');
+  logger.bot('Bot is ready! Commands: /summary, /remind, /todo, /event, /poll, /config, /topic, /catchup');
   logger.separator();
 });
 
