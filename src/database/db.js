@@ -28,18 +28,18 @@ const columnExists = (tableName, columnName) => {
 const migrateDb = () => {
   // Check if cooldowns table exists and has the old schema
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cooldowns'").all();
-  
+
   if (tables.length > 0) {
     // Table exists, check if it has the new schema
     if (!columnExists('cooldowns', 'channel_id')) {
       console.log('Migrating cooldowns table to new schema...');
-      
+
       // Drop old index if it exists
       db.exec(`DROP INDEX IF EXISTS idx_cooldowns_user_guild;`);
-      
+
       // Rename old table
       db.exec(`ALTER TABLE cooldowns RENAME TO cooldowns_old;`);
-      
+
       // Create new table with correct schema
       db.exec(`
         CREATE TABLE cooldowns (
@@ -50,7 +50,7 @@ const migrateDb = () => {
           timestamp INTEGER NOT NULL
         )
       `);
-      
+
       // Try to migrate old data (set channel_id to empty string for old records)
       // Note: Old records will naturally expire after 30 minutes
       try {
@@ -61,10 +61,10 @@ const migrateDb = () => {
       } catch (error) {
         console.warn('Could not migrate old cooldown data, starting fresh:', error.message);
       }
-      
+
       // Drop old table
       db.exec(`DROP TABLE cooldowns_old;`);
-      
+
       console.log('Migration complete!');
     }
   }
@@ -108,6 +108,61 @@ const initDb = () => {
       reference_id TEXT,
       cached_at INTEGER NOT NULL,
       deleted INTEGER DEFAULT 0
+    )
+  `);
+
+  // Table to track reminders
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      time INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      completed INTEGER DEFAULT 0
+    )
+  `);
+
+  // Table to track todos
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      creator_id TEXT NOT NULL,
+      assignee_id TEXT,
+      content TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Table to track events
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      creator_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      time INTEGER NOT NULL,
+      attendees TEXT DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Table to track guild settings
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS guild_settings (
+      guild_id TEXT PRIMARY KEY,
+      max_reminders INTEGER DEFAULT 5,
+      max_todos INTEGER DEFAULT 20,
+      max_events INTEGER DEFAULT 5,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
     )
   `);
 

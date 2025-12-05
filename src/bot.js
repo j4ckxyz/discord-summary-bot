@@ -5,6 +5,14 @@ import summariseCommand from './commands/summarise.js';
 import catchupCommand from './commands/catchup.js';
 import topicCommand from './commands/topic.js';
 import explainCommand from './commands/explain.js';
+import remindCommand from './commands/remind.js';
+import todoCommand from './commands/todo.js';
+import remindCommand from './commands/remind.js';
+import todoCommand from './commands/todo.js';
+import eventCommand from './commands/event.js';
+import configCommand from './commands/config.js';
+import pollCommand from './commands/poll.js';
+import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
 import messageCacheService from './services/messageCache.js';
@@ -31,18 +39,33 @@ const client = new Client({
   ]
 });
 
+// Services
+const scheduler = new SchedulerService(client);
+
 // Commands collection
-const commands = [summariseCommand, catchupCommand, topicCommand, explainCommand];
+const commands = [
+  summariseCommand,
+  catchupCommand,
+  topicCommand,
+  explainCommand,
+  remindCommand,
+  todoCommand,
+  remindCommand,
+  todoCommand,
+  eventCommand,
+  configCommand,
+  pollCommand
+];
 
 // Register slash commands
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
-  
+
   try {
     logger.info('Started refreshing application (/) commands.');
 
     const commandsData = commands.map(cmd => cmd.data.toJSON());
-    
+
     logger.info(`Registering ${commandsData.length} command(s): ${commandsData.map(c => c.name).join(', ')}`);
 
     await rest.put(
@@ -66,11 +89,11 @@ async function handleTextCommand(message) {
 
   const content = message.content.trim();
   const isMention = message.mentions.has(client.user);
-  
+
   // Check for prefix commands
   const prefixCommands = ['!summary', '!catchup', '!topic', '!explain'];
   const matchedPrefix = prefixCommands.find(p => content.toLowerCase().startsWith(p));
-  
+
   if (!isMention && !matchedPrefix) return;
 
   // Ignore replies to the bot
@@ -91,29 +114,44 @@ async function handleTextCommand(message) {
   // Parse the command and arguments
   let command = 'summary'; // default
   let args = [];
-  
-  if (matchedPrefix) {
-    const parts = content.split(/\s+/);
-    command = parts[0].substring(1).toLowerCase(); // Remove ! prefix
-    args = parts.slice(1);
-  } else if (isMention) {
-    // For mentions, parse: @bot command args
-    const parts = content.split(/\s+/).filter(p => !p.match(/^<@!?\d+>$/));
-    if (parts.length > 0) {
-      const firstWord = parts[0].toLowerCase();
-      if (['summary', 'catchup', 'topic', 'explain', 'help'].includes(firstWord)) {
-        command = firstWord;
-        args = parts.slice(1);
-      } else {
-        // Treat as summary with args
-        args = parts;
-      }
-    }
-  }
 
-  // Check for help command
-  if (command === 'help' || (args.length > 0 && args[0].toLowerCase() === 'help')) {
-    const helpMessage = `**Discord Summary Bot - Help**
+  // Handle mention-based commands
+  if (isMention) {
+    const mentionRegex = new RegExp(`^<@!?${client.user.id}>\\s*`);
+    const contentWithoutMention = message.content.replace(mentionRegex, '').trim();
+    const args = contentWithoutMention.split(/\s+/);
+    const commandName = args[0]?.toLowerCase(); // e.g. "summary" or "remind"
+
+    // Smart detection for natural language "remind me"
+    if (contentWithoutMention.toLowerCase().startsWith('remind me') || contentWithoutMention.toLowerCase().startsWith('remind')) {
+      // Strip "remind me" or "remind" and pass rest to remind command
+      let remindArgs = args.slice(1);
+      if (args[0].toLowerCase() === 'remind' && args[1]?.toLowerCase() === 'me') {
+        remindArgs = args.slice(2);
+      } else if (args[0].toLowerCase() === 'remind') {
+        remindArgs = args.slice(1);
+      }
+
+      return remindCommand.executeText(message, remindArgs);
+    }
+
+    // Check if first word matches a known command
+    if (commandName === 'summary' || commandName === 'summarise') {
+      return handleSummaryCommand(message, message.channel, guildId, userId, message.channel.id, args.slice(1), true);
+    }
+    if (commandName === 'catchup') {
+      return handleCatchupCommand(message, message.channel, guildId, userId, message.channel.id, args.slice(1));
+    }
+    if (commandName === 'todo') {
+      return todoCommand.executeText(message, args.slice(1));
+    }
+    if (commandName === 'event') {
+      return eventCommand.executeText(message, args.slice(1));
+    }
+
+    // Check for help command
+    if (command === 'help' || (args.length > 0 && args[0].toLowerCase() === 'help')) {
+      const helpMessage = `**Discord Summary Bot - Help**
 
 **Summary Commands:**
 \`!summary\` or \`/summary\` - Summarise messages since last summary
@@ -135,36 +173,37 @@ async function handleTextCommand(message) {
 **Rate Limits:**
 • ${config.maxUsesPerWindow} requests per ${config.cooldownMinutes} minutes per channel`;
 
-    await message.reply(helpMessage);
-    return;
-  }
-
-  // Check rate limit
-  const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
-  
-  if (!rateLimitCheck.allowed) {
-    const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
-    await message.reply(`You've reached your limit. Please wait ${timeRemaining} before requesting again.`);
-    return;
-  }
-
-  // Handle different commands
-  try {
-    if (command === 'catchup') {
-      await handleCatchupCommand(message, channel, guildId, userId, channelId, args);
-    } else if (command === 'topic') {
-      await handleTopicCommand(message, channel, guildId, userId, channelId, args);
-    } else if (command === 'explain') {
-      await handleExplainCommand(message, channel, guildId, userId, channelId, args);
-    } else {
-      await handleSummaryCommand(message, channel, guildId, userId, channelId, args, isMention);
+      await message.reply(helpMessage);
+      return;
     }
-    
-    // Update cooldown after successful command
-    rateLimitService.updateCooldown(userId, guildId, channelId);
-  } catch (error) {
-    logger.error('Error handling text command:', error);
-    await message.reply('An error occurred. Please try again later.');
+
+    // Check rate limit
+    const rateLimitCheck = rateLimitService.checkRateLimit(userId, guildId, channelId);
+
+    if (!rateLimitCheck.allowed) {
+      const timeRemaining = rateLimitService.formatRemainingTime(rateLimitCheck.timeUntilNextUse);
+      await message.reply(`You've reached your limit. Please wait ${timeRemaining} before requesting again.`);
+      return;
+    }
+
+    // Handle different commands
+    try {
+      if (command === 'catchup') {
+        await handleCatchupCommand(message, channel, guildId, userId, channelId, args);
+      } else if (command === 'topic') {
+        await handleTopicCommand(message, channel, guildId, userId, channelId, args);
+      } else if (command === 'explain') {
+        await handleExplainCommand(message, channel, guildId, userId, channelId, args);
+      } else {
+        await handleSummaryCommand(message, channel, guildId, userId, channelId, args, isMention);
+      }
+
+      // Update cooldown after successful command
+      rateLimitService.updateCooldown(userId, guildId, channelId);
+    } catch (error) {
+      logger.error('Error handling text command:', error);
+      await message.reply('An error occurred. Please try again later.');
+    }
   }
 }
 
@@ -173,10 +212,10 @@ async function handleSummaryCommand(message, channel, guildId, userId, channelId
   let summaryMode = 'default';
   let targetValue = null;
   const targetInput = args[0];
-  
+
   if (targetInput) {
     const numericValue = parseInt(targetInput, 10);
-    
+
     if (!isNaN(numericValue)) {
       if (targetInput.length >= 17 && numericValue > 100000) {
         summaryMode = 'user';
@@ -198,7 +237,7 @@ async function handleSummaryCommand(message, channel, guildId, userId, channelId
   logger.startOperation('SUMMARY', `mode=${summaryMode} | target=${targetValue} | user=${message.author.tag}`);
 
   const slot = await requestQueueService.requestSlot(channelId, userId);
-  
+
   if (slot.queued) {
     logger.queue(`Request queued | position=${slot.position} | user=${message.author.tag}`);
     await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
@@ -229,9 +268,9 @@ async function handleSummaryCommand(message, channel, guildId, userId, channelId
 // Handle !catchup command
 async function handleCatchupCommand(message, channel, guildId, userId, channelId, args) {
   const thinkingMsg = await message.reply('Analyzing your absence...');
-  
+
   const slot = await requestQueueService.requestSlot(channelId, userId);
-  
+
   if (slot.queued) {
     await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
     await requestQueueService.waitForSlot(slot.requestId);
@@ -293,9 +332,9 @@ async function handleTopicCommand(message, channel, guildId, userId, channelId, 
 
   const keyword = args.join(' ');
   const thinkingMsg = await message.reply(`Searching for discussions about "${keyword}"...`);
-  
+
   const slot = await requestQueueService.requestSlot(channelId, userId);
-  
+
   if (slot.queued) {
     await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
     await requestQueueService.waitForSlot(slot.requestId);
@@ -331,9 +370,9 @@ async function handleExplainCommand(message, channel, guildId, userId, channelId
 
   const topic = args.join(' ');
   const thinkingMsg = await message.reply(`Analyzing discussions to explain "${topic}"...`);
-  
+
   const slot = await requestQueueService.requestSlot(channelId, userId);
-  
+
   if (slot.queued) {
     await thinkingMsg.edit(`Your request is queued, position ${slot.position}. Please wait...`);
     await requestQueueService.waitForSlot(slot.requestId);
@@ -367,13 +406,13 @@ client.once('ready', async () => {
   logger.bot(`Active in ${client.guilds.cache.size} server(s)`);
   logger.bot(`LLM Provider: ${process.env.LLM_PROVIDER || 'google'} | Model: ${process.env.LLM_MODEL || 'gemini-2.0-flash-exp'}`);
   logger.bot(`Embedding Model: ${process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small'}`);
-  
+
   // Register slash commands
   await registerCommands();
-  
+
   // Start cache maintenance (cleanup old messages daily)
   messageCacheService.startMaintenanceSchedule();
-  
+
   logger.separator();
   logger.bot('Bot is ready! Commands: /summary, /catchup, /topic, /explain (also !prefix versions)');
   logger.separator();
@@ -395,7 +434,7 @@ client.on('interactionCreate', async (interaction) => {
     await command.execute(interaction);
   } catch (error) {
     logger.cmd(`/${interaction.commandName} FAILED | error=${error.message}`, 'ERROR');
-    
+
     const errorMessage = 'There was an error executing this command.';
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ content: errorMessage, ephemeral: true });
@@ -411,7 +450,7 @@ client.on('messageCreate', (message) => {
   if (!message.author.bot && message.guild) {
     messageCacheService.cacheMessage(message);
   }
-  
+
   // Handle text commands
   handleTextCommand(message);
 });

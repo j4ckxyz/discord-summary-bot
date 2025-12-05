@@ -37,13 +37,13 @@ export const CooldownModel = {
   canUseCommand(userId, guildId, channelId, cooldownMinutes, maxUses) {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - (cooldownMinutes * 60);
-    
+
     const stmt = db.prepare(`
       SELECT COUNT(*) as count FROM cooldowns 
       WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
     `);
     const result = stmt.get(userId, guildId, channelId, cutoffTime);
-    
+
     return result.count < maxUses;
   },
 
@@ -51,13 +51,13 @@ export const CooldownModel = {
   getRemainingUses(userId, guildId, channelId, cooldownMinutes, maxUses) {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - (cooldownMinutes * 60);
-    
+
     const stmt = db.prepare(`
       SELECT COUNT(*) as count FROM cooldowns 
       WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
     `);
     const result = stmt.get(userId, guildId, channelId, cutoffTime);
-    
+
     return Math.max(0, maxUses - result.count);
   },
 
@@ -65,7 +65,7 @@ export const CooldownModel = {
   getTimeUntilNextUse(userId, guildId, channelId, cooldownMinutes, maxUses) {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - (cooldownMinutes * 60);
-    
+
     const stmt = db.prepare(`
       SELECT timestamp FROM cooldowns 
       WHERE user_id = ? AND guild_id = ? AND channel_id = ? AND timestamp > ?
@@ -73,9 +73,9 @@ export const CooldownModel = {
       LIMIT 1
     `);
     const result = stmt.get(userId, guildId, channelId, cutoffTime);
-    
+
     if (!result) return 0;
-    
+
     const oldestUse = result.timestamp;
     const expiryTime = oldestUse + (cooldownMinutes * 60);
     return Math.max(0, expiryTime - now);
@@ -95,7 +95,7 @@ export const CooldownModel = {
   cleanupOldRecords(cooldownMinutes) {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - (cooldownMinutes * 60);
-    
+
     const stmt = db.prepare(`
       DELETE FROM cooldowns WHERE timestamp < ?
     `);
@@ -115,7 +115,7 @@ export const MessageCacheModel = {
       (id, channel_id, guild_id, author_id, author_username, author_display_name, content, created_at, reference_id, cached_at, deleted)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
-    
+
     return stmt.run(
       message.id,
       message.channel.id,
@@ -253,7 +253,7 @@ export const MessageCacheModel = {
   cleanupOldMessages(maxAgeDays) {
     const now = Math.floor(Date.now() / 1000);
     const cutoffTime = now - (maxAgeDays * 24 * 60 * 60);
-    
+
     const stmt = db.prepare(`
       DELETE FROM cached_messages WHERE created_at < ?
     `);
@@ -343,5 +343,214 @@ export const MessageCacheModel = {
       LIMIT ?
     `);
     return stmt.all(channelId, `%${keyword}%`, botUserId, limit);
+  }
+};
+
+export const ReminderModel = {
+  createReminder(userId, guildId, channelId, message, time) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      INSERT INTO reminders (user_id, guild_id, channel_id, message, time, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    return stmt.run(userId, guildId, channelId, message, time, now);
+  },
+
+  getDueReminders() {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      SELECT * FROM reminders 
+      WHERE time <= ? AND completed = 0
+    `);
+    return stmt.all(now);
+  },
+
+  markReminderComplete(id) {
+    const stmt = db.prepare(`
+      UPDATE reminders SET completed = 1 WHERE id = ?
+    `);
+    return stmt.run(id);
+  },
+
+  getUserReminders(userId, guildId) {
+    const stmt = db.prepare(`
+      SELECT * FROM reminders 
+      WHERE user_id = ? AND guild_id = ? AND completed = 0
+      ORDER BY time ASC
+    `);
+    return stmt.all(userId, guildId);
+  },
+
+  deleteReminder(id, userId) {
+    const stmt = db.prepare(`
+      DELETE FROM reminders WHERE id = ? AND user_id = ?
+    `);
+    return stmt.run(id, userId);
+  },
+
+  // Clean up old completed reminders (optional maintenance)
+  cleanupCompletedReminders(daysToKeep = 7) {
+    const now = Math.floor(Date.now() / 1000);
+    const cutoff = now - (daysToKeep * 24 * 60 * 60);
+    const stmt = db.prepare('DELETE FROM reminders WHERE completed = 1 AND time < ?');
+    return stmt.run(cutoff);
+  }
+};
+
+export const TodoModel = {
+  createTodo(guildId, channelId, creatorId, content, assigneeId = null) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      INSERT INTO todos (guild_id, channel_id, creator_id, assignee_id, content, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    return stmt.run(guildId, channelId, creatorId, assigneeId, content, now);
+  },
+
+  getChannelTodos(guildId, channelId) {
+    const stmt = db.prepare(`
+      SELECT * FROM todos 
+      WHERE guild_id = ? AND channel_id = ? AND status != 'done'
+      ORDER BY created_at ASC
+    `);
+    return stmt.all(guildId, channelId);
+  },
+
+  updateTodoStatus(id, status) {
+    const stmt = db.prepare(`
+      UPDATE todos SET status = ? WHERE id = ?
+    `);
+    return stmt.run(status, id);
+  },
+
+  assignTodo(id, assigneeId) {
+    const stmt = db.prepare(`
+      UPDATE todos SET assignee_id = ? WHERE id = ?
+    `);
+    return stmt.run(assigneeId, id);
+  },
+
+  deleteTodo(id) {
+    const stmt = db.prepare(`
+      DELETE FROM todos WHERE id = ?
+    `);
+    return stmt.run(id);
+  }
+};
+
+export const EventModel = {
+  createEvent(guildId, channelId, creatorId, name, description, time) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      INSERT INTO events (guild_id, channel_id, creator_id, name, description, time, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    return stmt.run(guildId, channelId, creatorId, name, description, time, now);
+  },
+
+  getChannelEvents(guildId, channelId) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      SELECT * FROM events 
+      WHERE guild_id = ? AND channel_id = ? AND time > ?
+      ORDER BY time ASC
+    `);
+    return stmt.all(guildId, channelId, now);
+  },
+
+  addAttendee(eventId, userId) {
+    const event = db.prepare('SELECT attendees FROM events WHERE id = ?').get(eventId);
+    if (!event) return false;
+
+    let attendees = [];
+    try {
+      attendees = JSON.parse(event.attendees);
+    } catch (e) {
+      attendees = [];
+    }
+
+    if (!attendees.includes(userId)) {
+      attendees.push(userId);
+      const stmt = db.prepare('UPDATE events SET attendees = ? WHERE id = ?');
+      return stmt.run(JSON.stringify(attendees), eventId);
+    }
+    return { changes: 0 };
+  },
+
+  removeAttendee(eventId, userId) {
+    const event = db.prepare('SELECT attendees FROM events WHERE id = ?').get(eventId);
+    if (!event) return false;
+
+    let attendees = [];
+    try {
+      attendees = JSON.parse(event.attendees);
+    } catch (e) {
+      attendees = [];
+    }
+
+    const newAttendees = attendees.filter(id => id !== userId);
+    const stmt = db.prepare('UPDATE events SET attendees = ? WHERE id = ?');
+    return stmt.run(JSON.stringify(newAttendees), eventId);
+  },
+
+  deleteEvent(id) {
+    const stmt = db.prepare('DELETE FROM events WHERE id = ?');
+    return stmt.run(id);
+  },
+
+  getDueEvents(timeWindowMinutes = 15) {
+    const now = Math.floor(Date.now() / 1000);
+    const window = now + (timeWindowMinutes * 60);
+    const stmt = db.prepare(`
+       SELECT * FROM events
+       WHERE time > ? AND time <= ?
+     `);
+    return stmt.all(now, window);
+  }
+};
+
+export const SettingsModel = {
+  getSettings(guildId) {
+    const stmt = db.prepare('SELECT * FROM guild_settings WHERE guild_id = ?');
+    const settings = stmt.get(guildId);
+
+    if (!settings) {
+      // Return defaults if no custom settings exist
+      return {
+        guild_id: guildId,
+        max_reminders: 5,
+        max_todos: 20,
+        max_events: 5
+      };
+    }
+    return settings;
+  },
+
+  updateSetting(guildId, key, value) {
+    const now = Math.floor(Date.now() / 1000);
+
+    // Ensure record exists
+    const exists = db.prepare('SELECT 1 FROM guild_settings WHERE guild_id = ?').get(guildId);
+
+    if (!exists) {
+      const stmt = db.prepare(`
+        INSERT INTO guild_settings (guild_id, max_reminders, max_todos, max_events, created_at, updated_at)
+        VALUES (?, 5, 20, 5, ?, ?)
+      `);
+      stmt.run(guildId, now, now);
+    }
+
+    // Prepare update statement based on key (safeguard against injection/invalid keys)
+    const allowedKeys = ['max_reminders', 'max_todos', 'max_events'];
+    if (!allowedKeys.includes(key)) {
+      throw new Error(`Invalid setting key: ${key}`);
+    }
+
+    const stmt = db.prepare(`
+      UPDATE guild_settings 
+      SET ${key} = ?, updated_at = ? 
+      WHERE guild_id = ?
+    `);
+    return stmt.run(value, now, guildId);
   }
 };
