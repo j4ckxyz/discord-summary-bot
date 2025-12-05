@@ -347,13 +347,21 @@ export const MessageCacheModel = {
 };
 
 export const ReminderModel = {
-  createReminder(userId, guildId, channelId, message, time) {
+  createReminder(userId, guildId, channelId, message, time, isPublic = 0) {
     const now = Math.floor(Date.now() / 1000);
+
+    // Ensure column exists (naive migration for this session)
+    try {
+      db.prepare('ALTER TABLE reminders ADD COLUMN is_public INTEGER DEFAULT 0').run();
+    } catch (e) {
+      // Column likely exists
+    }
+
     const stmt = db.prepare(`
-      INSERT INTO reminders (user_id, guild_id, channel_id, message, time, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO reminders (user_id, guild_id, channel_id, message, time, created_at, is_public)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    return stmt.run(userId, guildId, channelId, message, time, now);
+    return stmt.run(userId, guildId, channelId, message, time, now, isPublic ? 1 : 0);
   },
 
   getDueReminders() {

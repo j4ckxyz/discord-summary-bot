@@ -20,6 +20,18 @@ export default {
                         .setRequired(true)))
         .addSubcommand(subcommand =>
             subcommand
+                .setName('channel')
+                .setDescription('Set a reminder for the whole channel')
+                .addStringOption(option =>
+                    option.setName('time')
+                        .setDescription('When to remind the channel')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('message')
+                        .setDescription('What to remind about')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('list')
                 .setDescription('List your active reminders'))
         .addSubcommand(subcommand =>
@@ -37,10 +49,11 @@ export default {
         const channelId = interaction.channelId;
         const userId = interaction.user.id;
 
-        if (subcommand === 'me') {
-            await interaction.deferReply(); // Defer because LLM might take a second
+        if (subcommand === 'me' || subcommand === 'channel') {
+            await interaction.deferReply();
             const timeStr = interaction.options.getString('time');
             const message = interaction.options.getString('message');
+            const isPublic = subcommand === 'channel';
 
             const time = await parseTime(timeStr);
             if (!time) {
@@ -51,11 +64,14 @@ export default {
             const settings = SettingsModel.getSettings(guildId);
             const userReminders = ReminderModel.getUserReminders(userId, guildId);
             if (userReminders.length >= settings.max_reminders) {
+                // For public reminders, maybe we should have a shared limit? 
+                // For now, count towards user's limit to prevent spam.
                 return interaction.editReply({ content: `❌ You have reached the limit of ${settings.max_reminders} active reminders in this server.` });
             }
 
-            ReminderModel.createReminder(userId, guildId, channelId, message, time);
-            return interaction.editReply(`⏰ I'll remind you to **${message}** <t:${time}:R>!`);
+            ReminderModel.createReminder(userId, guildId, channelId, message, time, isPublic);
+            const prefix = isPublic ? '📢 Group Reminder set! I will remind here' : "⏰ I'll remind you";
+            return interaction.editReply(`${prefix} to **${message}** <t:${time}:R>!`);
         }
 
         if (subcommand === 'list') {
@@ -66,7 +82,8 @@ export default {
             }
 
             const list = reminders.map(r => {
-                return `**${r.id}**. ${r.message} (<t:${r.time}:R>)`;
+                const type = r.is_public ? '📢 (Public)' : '🔒';
+                return `**${r.id}**. ${type} ${r.message} (<t:${r.time}:R>)`;
             }).join('\n');
 
             return interaction.reply({ content: `**⏰ Your Reminders:**\n${list}`, ephemeral: true });

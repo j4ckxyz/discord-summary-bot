@@ -11,6 +11,8 @@ import todoCommand from './commands/todo.js';
 import eventCommand from './commands/event.js';
 import configCommand from './commands/config.js';
 import pollCommand from './commands/poll.js';
+import timerCommand from './commands/timer.js';
+import funCommand from './commands/fun.js';
 import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
@@ -52,7 +54,9 @@ const commands = [
 
   eventCommand,
   configCommand,
-  pollCommand
+  pollCommand,
+  timerCommand,
+  funCommand
 ];
 
 // Register slash commands
@@ -145,6 +149,12 @@ async function handleTextCommand(message) {
     }
     if (commandName === 'event') {
       return eventCommand.executeText(message, args.slice(1));
+    }
+    if (commandName === 'timer') {
+      return timerCommand.executeText(message, args.slice(1));
+    }
+    if (commandName === 'roll' || commandName === 'flip') {
+      return funCommand.executeText(message, args);
     }
 
     // Check for help command
