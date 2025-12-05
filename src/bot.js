@@ -14,6 +14,7 @@ import pollCommand from './commands/poll.js';
 import timerCommand from './commands/timer.js';
 import funCommand from './commands/fun.js';
 import freesCommand from './commands/frees.js';
+import searchCommand from './commands/search.js';
 import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
@@ -58,7 +59,8 @@ const commands = [
   pollCommand,
   timerCommand,
   funCommand,
-  freesCommand
+  freesCommand,
+  searchCommand
 ];
 
 // Register slash commands
@@ -157,6 +159,9 @@ async function handleTextCommand(message) {
     }
     if (commandName === 'roll' || commandName === 'flip') {
       return funCommand.executeText(message, args);
+    }
+    if (commandName === 'search') {
+      return searchCommand.executeText(message, args);
     }
 
     // Check for help command

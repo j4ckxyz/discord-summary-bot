@@ -647,7 +647,33 @@ Target ISO Timestamp:`;
       logger.error('Error parsing time with LLM:', error);
       return null;
     }
+  /**
+   * Summarise search results for a quick answer
+   * @param {string} query - The search query
+   * @param {Array} results - Array of {title, link, snippet}
+   * @returns {Promise<string>} - Concise summary with sources
+   */
+  async summariseSearchResults(query, results) {
+      const formattedResults = results.map((r, i) =>
+        `[${i + 1}] ${r.title}: ${r.snippet} (Link: ${r.link})`
+      ).join('\n\n');
+
+      const systemPrompt = `You are a concise search assistant. 
+1. Answer the query based ONLY on the provided results.
+2. Be accurate and direct.
+3. Keep the answer under 200 characters if possible.
+4. Always cite sources using the format: [Source Name](URL).
+5. If the results are irrelevant, say so.`;
+
+      const userPrompt = `Query: ${query}
+
+Results:
+${formattedResults}
+
+Summarise the answer:`;
+
+      return this.generateCompletion(systemPrompt, userPrompt);
+    }
   }
-}
 
 export default new LLMService();
