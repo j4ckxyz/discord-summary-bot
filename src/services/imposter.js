@@ -176,6 +176,78 @@ class ImposterService {
         return game.players[game.turnIndex];
     }
 
+    async startVote(channelId, interaction) {
+        const game = this.games.get(channelId);
+        if (!game || game.status !== 'PLAYING') throw new Error('Game not in progress.');
+
+        // Stop the game
+        game.status = 'VOTING';
+
+        const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+
+        // List players with numbers
+        let voteMessage = "**🚨 EMERGENCY MEETING! 🚨**\n\nVote for the Imposter by reacting with the number!\n\n";
+        game.players.forEach((p, i) => {
+            voteMessage += `${numberEmojis[i]} **${p.name}**\n`;
+        });
+        voteMessage += "\n(Voting ends in 60s)";
+
+        const msg = await interaction.channel.send(voteMessage);
+
+        // Add reactions (subtract 1 later for bot's own reaction)
+        for (let i = 0; i < game.players.length; i++) {
+            if (i < numberEmojis.length) await msg.react(numberEmojis[i]);
+        }
+
+        const collector = msg.createReactionCollector({ time: 60000 });
+
+        collector.on('end', async (collected) => {
+            const votes = new Array(game.players.length).fill(0);
+
+            collected.forEach((reaction) => {
+                const index = numberEmojis.indexOf(reaction.emoji.name);
+                if (index >= 0 && index < game.players.length) {
+                    votes[index] = reaction.count - 1; // Subtract bot's reaction
+                }
+            });
+
+            // Find winner
+            let maxVotes = -1;
+            let winnerIndex = -1;
+            let tie = false;
+
+            for (let i = 0; i < votes.length; i++) {
+                if (votes[i] > maxVotes) {
+                    maxVotes = votes[i];
+                    winnerIndex = i;
+                    tie = false;
+                } else if (votes[i] === maxVotes) {
+                    tie = true;
+                }
+            }
+
+            const imposterPlayer = game.players.find(p => p.id === game.imposterId);
+
+            let resultMsg = "**🗳️ VOTING ENDED!**\n\n";
+            if (tie || maxVotes === 0) {
+                resultMsg += `🤷 It was a tie (or no votes)! No one was ejected.\n`;
+            } else {
+                const ejected = game.players[winnerIndex];
+                const wasImposter = ejected.id === game.imposterId;
+                resultMsg += `👋 **${ejected.name}** was voted out with ${maxVotes} votes!\n\n`;
+                resultMsg += wasImposter ? `✅ **THEY WERE THE IMPOSTER!**` : `❌ **They were NOT the imposter...**`;
+            }
+
+            resultMsg += `\n\n🕵️ **The Real Imposter:** ${imposterPlayer.name}`;
+            resultMsg += `\n📖 **The Secret Word:** ${game.word}`;
+
+            await interaction.channel.send(resultMsg);
+
+            // Clean up game
+            this.games.delete(channelId);
+        });
+    }
+
     endGame(channelId) {
         this.games.delete(channelId);
     }
