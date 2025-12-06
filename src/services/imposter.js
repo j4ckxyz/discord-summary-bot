@@ -50,7 +50,7 @@ class ImposterService {
         const game = this.games.get(channelId);
         if (!game) throw new Error('No game found.');
         if (game.hostId !== userId) throw new Error('Only the host can start the game.');
-        if (game.players.length < 3) throw new Error('Need at least 3 players to start (4+ recommended).');
+        if (game.players.length < 2) throw new Error('Need at least 2 players to start.');
 
         // Fetch word from LLM
         const data = await llmService.generateImposterGame();
