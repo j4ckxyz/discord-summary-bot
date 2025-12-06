@@ -584,7 +584,8 @@ client.on('interactionCreate', async (interaction) => {
 
 // Helper to manage game flow (bot turns)
 // Helper to manage game flow (bot turns)
-async function processGameLoop(channel) {
+// Helper to manage game flow (bot turns and announcements)
+async function processGameTurn(channel) {
   // Small delay for realism
   await new Promise(r => setTimeout(r, 2000));
 
@@ -601,7 +602,13 @@ async function processGameLoop(channel) {
 
       // Validate next turn
       if (imposterService.isBotTurn(channel.id)) {
-        await processGameLoop(channel);
+        await processGameTurn(channel);
+      } else {
+        // Human turn - announce it
+        const nextPlayer = imposterService.getCurrentPlayer(channel.id);
+        if (nextPlayer) {
+          await channel.send(`👉 **It is <@${nextPlayer.id}>'s turn!**`);
+        }
       }
     } else if (turnResult && turnResult.action === 'VOTE') {
       // Vote started, stop loop
@@ -633,8 +640,8 @@ client.on('messageCreate', async (message) => {
       }
       return; // Stop processing
     } else if (result === 'VALID_MOVE') {
-      // Human moved. Now check if bots need to play
-      await processGameLoop(message.channel);
+      // Human moved. Now check who is next
+      await processGameTurn(message.channel);
       return;
     }
   }
@@ -672,7 +679,7 @@ process.on('unhandledRejection', (error) => {
 
 // Event: Custom Game Events
 client.on('gameStart', async (channel) => {
-  await processGameLoop(channel);
+  await processGameTurn(channel);
 });
 
 // Start the bot
