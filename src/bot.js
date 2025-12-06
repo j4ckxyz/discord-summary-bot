@@ -15,6 +15,8 @@ import timerCommand from './commands/timer.js';
 import funCommand from './commands/fun.js';
 import freesCommand from './commands/frees.js';
 import searchCommand from './commands/search.js';
+import imposterCommand from './commands/imposter.js';
+import imposterService from './services/imposter.js';
 import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
@@ -60,7 +62,8 @@ const commands = [
   timerCommand,
   funCommand,
   freesCommand,
-  searchCommand
+  searchCommand,
+  imposterCommand
 ];
 
 // Register slash commands

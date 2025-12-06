@@ -599,6 +599,33 @@ Keep it concise. If no one mentioned availability, say "No availability discussi
   }
 
   /**
+   * Generate a secret word and category for the Imposter game
+   * @returns {Promise<{word: string, category: string}>}
+   */
+  async generateImposterGame() {
+    const systemPrompt = `You are a Game Master for the party game "Imposter" (Word Chameleon).
+Your job is to pick a random, safe, family-friendly secret word and its broad category.
+
+Rules:
+1. Category should be broad (e.g. "Food", "Animal", "Place").
+2. Word should be specific but common (e.g. "Pizza", "Giraffe", "Paris").
+3. Output ONLY valid JSON: {"category": "...", "word": "..."}`;
+
+    const userPrompt = `Generate a new word for the game.`;
+
+    // Use a strict JSON parser if possible, or just parse text
+    const result = await this.generateCompletion(systemPrompt, userPrompt);
+    try {
+      // Clean up potential markdown code blocks
+      const jsonStr = result.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      logger.error('Failed to parse Imposter game JSON:', result);
+      return { category: 'Food', word: 'Pizza' }; // Fallback
+    }
+  }
+
+  /**
    * Parse a natural language date/time string into an ISO timestamp
    * @param {string} input - The natural language input (e.g., "tomorrow at 5pm", "in 2 hours")
    * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid
