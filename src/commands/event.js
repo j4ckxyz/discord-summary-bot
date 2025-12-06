@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { EventModel, SettingsModel } from '../database/models.js';
 import { parseTime } from '../utils/timeParser.js';
 
@@ -26,6 +26,14 @@ export default {
             subcommand
                 .setName('list')
                 .setDescription('List upcoming events'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('view')
+                .setDescription('View event details and manage participation')
+                .addIntegerOption(option =>
+                    option.setName('id')
+                    .setDescription('The ID of the event')
+                    .setRequired(true)))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('join')
@@ -97,25 +105,8 @@ export default {
             const result = EventModel.createEvent(guildId, channelId, userId, name, description, time);
             const eventId = result.lastInsertRowid; // Use ID from result for buttons
 
-            const dateStr = new Date(time * 1000).toLocaleString();
-
-            // Create Buttons
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`event_join_${eventId}`)
-                        .setLabel('Join')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`event_leave_${eventId}`)
-                        .setLabel('Leave')
-                        .setStyle(ButtonStyle.Danger)
-                );
-
-            return interaction.editReply({
-                content: `📅 **Event Created!**\n**${name}**\nTime: ${dateStr}\n${description}`,
-                components: [row]
-            });
+            // Redirect to view
+            return this.renderEventView(interaction, eventId, true);
         }
 
         if (subcommand === 'list') {
@@ -127,12 +118,17 @@ export default {
 
             const list = events.map(e => {
                 let attendees = [];
-                try { attendees = JSON.parse(e.attendees); } catch (_) { }
+                try { attendees = JSON.parse(e.attendees); } catch (_) {}
                 const dateStr = new Date(e.time * 1000).toLocaleString();
-                return `**${e.id}**. **${e.name}** - ${dateStr} (${attendees.length} attending)`;
+                return `**#${e.id}** - **${e.name}**\n🕒 <t:${e.time}:R> (${dateStr})\n👥 ${attendees.length} attending\n`;
             }).join('\n');
 
-            return interaction.reply(`**📅 Upcoming Events:**\n${list}`);
+            return interaction.reply(`**📅 Upcoming Events**\nUse \`/event view [id]\` for details and to join.\n\n${list}`);
+        }
+
+        if (subcommand === 'view') {
+            const id = interaction.options.getInteger('id');
+            return this.renderEventView(interaction, id);
         }
 
         if (subcommand === 'join') {
@@ -197,6 +193,62 @@ export default {
         }
     },
 
+    async renderEventView(interaction, eventId, isEdit = false) {
+        const event = EventModel.getEvent(eventId);
+        if (!event) {
+            const msg = { content: '❌ Event not found.', ephemeral: true };
+            return isEdit ? interaction.editReply(msg) : interaction.reply(msg);
+        }
+
+        let attendees = [];
+        try { attendees = JSON.parse(event.attendees); } catch (_) {}
+
+        const embed = new EmbedBuilder()
+            .setTitle(`📅 ${event.name}`)
+            .setDescription(event.description || 'No description provided.')
+            .setColor(0x3498db)
+            .addFields(
+                { name: 'Time', value: `<t:${event.time}:F> (<t:${event.time}:R>)`, inline: true },
+                { name: 'Host', value: `<@${event.creator_id}>`, inline: true },
+                { name: 'Participants (' + attendees.length + ')', value: attendees.length > 0 ? attendees.map(id => `<@${id}>`).join(', ') : 'No one yet!' }
+            )
+            .setFooter({ text: `Event ID: ${event.id}` });
+
+        // Buttons
+        const joinBtn = new ButtonBuilder()
+            .setCustomId(`event_join_${event.id}`)
+            .setLabel('Join')
+            .setStyle(ButtonStyle.Success);
+        
+        const leaveBtn = new ButtonBuilder()
+            .setCustomId(`event_leave_${event.id}`)
+            .setLabel('Leave')
+            .setStyle(ButtonStyle.Secondary);
+
+        const deleteBtn = new ButtonBuilder()
+            .setCustomId(`event_delete_${event.id}`)
+            .setLabel('Cancel Event')
+            .setStyle(ButtonStyle.Danger);
+
+        const row1 = new ActionRowBuilder().addComponents(joinBtn, leaveBtn, deleteBtn);
+
+        // Reminder Select Menu
+        const select = new StringSelectMenuBuilder()
+            .setCustomId(`event_remind_select_${event.id}`)
+            .setPlaceholder('⏰ Set a reminder...')
+            .addOptions(
+                new StringSelectMenuOptionBuilder().setLabel('15 minutes before').setValue('15m'),
+                new StringSelectMenuOptionBuilder().setLabel('1 hour before').setValue('1h'),
+                new StringSelectMenuOptionBuilder().setLabel('1 day before').setValue('1d'),
+                new StringSelectMenuOptionBuilder().setLabel('At event time').setValue('0m'),
+            );
+
+        const row2 = new ActionRowBuilder().addComponents(select);
+
+        const payload = { content: '', embeds: [embed], components: [row1, row2] };
+        return isEdit ? interaction.editReply(payload) : interaction.reply(payload);
+    },
+
     async executeText(message, args) {
         // Basic text command support could be added here similar to todo
         if (!args.length) return message.reply('Usage: !event <create|list|join|leave> [args]');
@@ -207,9 +259,9 @@ export default {
             if (events.length === 0) return message.reply('📅 No upcoming events.');
             const list = events.map(e => {
                 const dateStr = new Date(e.time * 1000).toLocaleString();
-                return `**${e.id}**. **${e.name}** - ${dateStr}`;
+                return `**#${e.id}** - **${e.name}** - ${dateStr}`;
             }).join('\n');
-            return message.reply(`**📅 Upcoming Events:**\n${list}`);
+            return message.reply(`**📅 Upcoming Events:**\n${list}\nUse \`/event view [id]\` for more.`);
         }
         // Support other commands as needed
     }

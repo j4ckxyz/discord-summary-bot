@@ -438,43 +438,96 @@ client.once('ready', async () => {
 
 // Event: Interaction created (slash commands and buttons)
 client.on('interactionCreate', async (interaction) => {
-  // Handle Buttons
-  if (interaction.isButton()) {
+  // Handle Buttons and Select Menus
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
     const customId = interaction.customId;
 
+    // Event Join
     if (customId.startsWith('event_join_')) {
       const eventId = customId.replace('event_join_', '');
-      // Since we can't easily import EventModel here without circular deps if not careful (though defined above),
-      // or we just use the imported Model if it's available.
-      // Note: we haven't imported EventModel here yet. Need to add import!
-      // But wait, importing models.js is fine.
-
       try {
-        // Dynamic import or ensure import at top. 
-        // Models are usually safe to import.
         const { EventModel } = await import('./database/models.js');
-
         const res = EventModel.addAttendee(eventId, interaction.user.id);
-        if (res === false) return interaction.reply({ content: '❌ Event not found or expired.', ephemeral: true });
-        if (res.changes === 0) return interaction.reply({ content: '⚠️ You are already attending.', ephemeral: true });
 
-        return interaction.reply({ content: '✅ You joined the event!', ephemeral: true });
+        if (res === false) return interaction.reply({ content: '❌ Event not found or expired.', ephemeral: true });
+
+        // Refresh the view
+        return eventCommand.renderEventView(interaction, eventId, true);
       } catch (e) {
         logger.error('Button error', e);
         return interaction.reply({ content: '❌ Error joining event.', ephemeral: true });
       }
     }
 
+    // Event Leave
     if (customId.startsWith('event_leave_')) {
       const eventId = customId.replace('event_leave_', '');
       try {
         const { EventModel } = await import('./database/models.js');
         const res = EventModel.removeAttendee(eventId, interaction.user.id);
+
         if (res === false) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
 
-        return interaction.reply({ content: '👋 You left the event.', ephemeral: true });
+        // Refresh the view
+        return eventCommand.renderEventView(interaction, eventId, true);
       } catch (e) {
         return interaction.reply({ content: '❌ Error leaving.', ephemeral: true });
+      }
+    }
+
+    // Event Delete
+    if (customId.startsWith('event_delete_')) {
+      const eventId = customId.replace('event_delete_', '');
+      try {
+        const { EventModel } = await import('./database/models.js');
+        const event = EventModel.getEvent(eventId);
+
+        if (!event) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+
+        // Permission check
+        const member = await interaction.guild.members.fetch(interaction.user.id);
+        const isAdmin = member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+
+        if (event.creator_id !== interaction.user.id && !isAdmin) {
+          return interaction.reply({ content: '❌ You can only delete events you created.', ephemeral: true });
+        }
+
+        EventModel.deleteEvent(eventId);
+        return interaction.update({ content: `🗑️ **Event Cancelled**\n${event.name} was cancelled by <@${interaction.user.id}>.`, embeds: [], components: [] });
+      } catch (e) {
+        return interaction.reply({ content: '❌ Error deleting event.', ephemeral: true });
+      }
+    }
+
+    // Event Reminder Select
+    if (customId.startsWith('event_remind_select_')) {
+      const eventId = customId.replace('event_remind_select_', '');
+      const value = interaction.values[0]; // 15m, 1h, 1d, 0m
+
+      try {
+        const { EventModel, ReminderModel } = await import('./database/models.js');
+        const event = EventModel.getEvent(eventId);
+        if (!event) return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+
+        let timeOffset = 0;
+        if (value === '15m') timeOffset = 15 * 60;
+        if (value === '1h') timeOffset = 60 * 60;
+        if (value === '1d') timeOffset = 24 * 60 * 60;
+
+        const remindTime = event.time - timeOffset;
+
+        if (remindTime <= Math.floor(Date.now() / 1000)) {
+          return interaction.reply({ content: '⚠️ That time has already passed!', ephemeral: true });
+        }
+
+        const message = `Event: ${event.name} is starting ${value === '0m' ? 'now' : 'in ' + value}!`;
+        ReminderModel.createReminder(interaction.user.id, interaction.guildId, interaction.channelId, message, remindTime, false);
+
+        return interaction.reply({ content: `✅ I'll remind you about **${event.name}** <t:${remindTime}:R>!`, ephemeral: true });
+
+      } catch (e) {
+        logger.error('Reminder error', e);
+        return interaction.reply({ content: '❌ Error setting reminder.', ephemeral: true });
       }
     }
 
