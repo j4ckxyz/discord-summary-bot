@@ -582,37 +582,38 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Helper to manage game flow (bot turns)
-// Helper to manage game flow (bot turns)
-// Helper to manage game flow (bot turns and announcements)
+/**
+ * Process game turn - handles bot turns and announces human turns
+ * Called after game start and after each valid move
+ */
 async function processGameTurn(channel) {
-  // Small delay for realism
-  await new Promise(r => setTimeout(r, 2000));
+  const game = imposterService.getGame(channel.id);
+  if (!game || game.status !== 'PLAYING') return;
 
   // Check if it's a bot turn
   if (imposterService.isBotTurn(channel.id)) {
+    // Small delay for realism
+    await new Promise(r => setTimeout(r, 1500));
     await channel.sendTyping();
-    await new Promise(r => setTimeout(r, 2000)); // Thinking time
+    await new Promise(r => setTimeout(r, 1500));
 
-    // Pass full channel object now
     const turnResult = await imposterService.playBotTurn(channel);
 
     if (turnResult && turnResult.action === 'CLUE') {
-      await channel.send(`🤖 **${turnResult.name}**: ${turnResult.clue}`);
+      // Announce bot's clue
+      await channel.send(`✅ **${turnResult.name}**: ${turnResult.clue}`);
 
-      // Validate next turn
-      if (imposterService.isBotTurn(channel.id)) {
-        await processGameTurn(channel);
-      } else {
-        // Human turn - announce it
-        const nextPlayer = imposterService.getCurrentPlayer(channel.id);
-        if (nextPlayer) {
-          await channel.send(`👉 **It is <@${nextPlayer.id}>'s turn!**`);
-        }
-      }
+      // Recurse to handle next turn
+      await processGameTurn(channel);
     } else if (turnResult && turnResult.action === 'VOTE') {
-      // Vote started, stop loop
+      // Vote started by bot
       return;
+    }
+  } else {
+    // Human turn - send explicit prompt
+    const currentPlayer = imposterService.getCurrentPlayer(channel.id);
+    if (currentPlayer) {
+      await channel.send(`\n👉 <@${currentPlayer.id}> — **Your turn!** Type your clue below.`);
     }
   }
 }
@@ -625,25 +626,24 @@ client.on('messageCreate', async (message) => {
   }
 
   // Imposter Game Logic
-  // Check if this message is a Move in the game
   const game = imposterService.getGame(message.channel.id);
   if (game && game.status === 'PLAYING' && !message.author.bot) {
     const result = imposterService.handleMessage(message.channel.id, message);
 
-    if (result === 'OUT_OF_TURN') {
-      try {
-        await message.delete();
-        const warning = await message.channel.send(`🤫 Shh <@${message.author.id}>! Wait for your turn.`);
-        setTimeout(() => warning.delete().catch(() => { }), 3000);
-      } catch (e) {
-        await message.react('🤫').catch(() => { });
+    if (result === 'VALID_MOVE') {
+      // Announce the clue that was just played
+      const clueHistory = imposterService.getClueHistory(message.channel.id);
+      const lastClue = game.messages[game.messages.length - 1];
+
+      if (lastClue) {
+        await message.channel.send(`✅ **${lastClue.player}**: ${lastClue.content}`);
       }
-      return; // Stop processing
-    } else if (result === 'VALID_MOVE') {
-      // Human moved. Now check who is next
+
+      // Process next turn (bot or human prompt)
       await processGameTurn(message.channel);
       return;
     }
+    // If IGNORED, just let it fall through to normal message handling
   }
 
   // Handle text commands

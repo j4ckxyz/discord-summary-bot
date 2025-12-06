@@ -76,55 +76,61 @@ class ImposterService {
 
     /**
      * Handle a user message during the game
-     * Returns true if message should be kept, false if it should be deleted (out of turn)
+     * Only accepts messages from the CURRENT player.
+     * Returns: 'VALID_MOVE' | 'IGNORED'
      */
     handleMessage(channelId, message) {
         const game = this.games.get(channelId);
         if (!game || game.status !== 'PLAYING') return 'IGNORED';
-
         if (message.author.bot) return 'IGNORED';
-        // Only active players can move, but anyone can chat? 
-        // Let's enforce that only players can trigger "Out of Turn".
-        const isPlayer = game.players.some(p => p.id === message.author.id);
-        if (!isPlayer) return 'IGNORED';
 
-        const content = message.content.trim();
-
-        // 1. Check if it LOOKS like a move (Single word, no spaces, < 20 chars)
-        // Adjust regex to allow simple punctuation like "apple!" or "apple." but fail "apple pie"
-        const isSingleWord = /^[a-zA-Z0-9'!-?]+$/.test(content);
-        const isShort = content.length <= 20;
-
-        // Ignore commands
-        if (content.startsWith('/') || content.startsWith('!')) return 'IGNORED';
-        if (['vote', 'stop', 'help'].includes(content.toLowerCase())) return 'IGNORED';
-
-        // If it's a sentence or long, treat as CHAT (Ignore)
-        if (!isSingleWord || !isShort) {
-            return 'IGNORED';
-        }
-
-        // It LOOKS like a move. Now check turn.
+        // Get current player
         const currentUserId = game.turnOrder[game.turnIndex];
         const currentPlayer = game.players.find(p => p.id === currentUserId);
 
-        if (message.author.id === currentUserId) {
-            // Valid move!
-            game.messages.push({
-                player: currentPlayer.name,
-                content: content
-            });
-            game.usedWords.add(content.toLowerCase());
-
-            // Advance turn
-            game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
-
-            return 'VALID_MOVE';
-        } else {
-            // It was a single word sent by the WRONG player. 
-            // This is likely an attempt to play out of turn.
-            return 'OUT_OF_TURN';
+        // ONLY accept messages from the current player
+        if (message.author.id !== currentUserId) {
+            return 'IGNORED'; // Not their turn - silently ignore
         }
+
+        // It's the current player's message - accept it as their clue
+        const content = message.content.trim();
+
+        // Record the clue
+        game.messages.push({
+            player: currentPlayer.name,
+            playerId: currentPlayer.id,
+            content: content
+        });
+        game.usedWords.add(content.toLowerCase());
+
+        // Advance turn
+        game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
+
+        // Check if we completed a round
+        if (game.turnIndex === 0) {
+            game.round++;
+        }
+
+        return 'VALID_MOVE';
+    }
+
+    /**
+     * Get formatted clue history for display
+     */
+    getClueHistory(channelId) {
+        const game = this.games.get(channelId);
+        if (!game || game.messages.length === 0) return null;
+
+        return game.messages.map((m, i) => `${i + 1}. **${m.player}**: ${m.content}`).join('\n');
+    }
+
+    /**
+     * Get the current round number
+     */
+    getRound(channelId) {
+        const game = this.games.get(channelId);
+        return game ? game.round : 0;
     }
 
     addBot(channelId) {
