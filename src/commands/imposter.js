@@ -35,54 +35,51 @@ export default {
                 return interaction.reply(`✅ **Joined!**\nPlayers (${game.players.length}): ${names}`);
             }
 
-            if (sub === 'start') {
-                await interaction.deferReply();
-                const game = await imposterService.startGame(channelId, userId);
+            const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
 
-                // DM everyone
-                const dmPromises = game.players.map(async (p) => {
-                    const user = await interaction.client.users.fetch(p.id);
-                    if (p.id === game.imposterId) {
-                        return user.send(`🕵️ **YOU ARE THE IMPOSTER** 🕵️\n\nThe Category is: **${game.category}**.\nTry to blend in!`);
-                    } else {
-                        return user.send(`👤 **You are a Civilian**.\n\nThe Word is: **${game.word}**\nCategory: ${game.category}.`);
-                    }
-                });
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`imposter_reveal_${channelId}`)
+                        .setLabel('🕵️ Check My Role')
+                        .setStyle(ButtonStyle.Primary)
+                );
 
-                await Promise.all(dmPromises);
+            const firstPlayer = game.players[game.turnIndex];
+            await interaction.editReply({
+                content: `🎲 **Game Started!**\n\nThe Category is: **${game.category}**\n\n👇 **Click below to see your secret role!** (Don't stream this!)\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`,
+                components: [row]
+            });
 
-                const firstPlayer = game.players[game.turnIndex];
-                await interaction.editReply(`🎲 **Game Started!** Check your DMs!\n\nThe Category is: **${game.category}**\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`);
-
-                // If first player is bot, trigger loop event
-                if (firstPlayer.isBot) {
-                    interaction.client.emit('gameStart', interaction.channel);
-                }
-                return;
+            // If first player is bot, trigger loop event
+            if (firstPlayer.isBot) {
+                interaction.client.emit('gameStart', interaction.channel);
             }
+            return;
+        }
 
             if (sub === 'addbot') {
-                try {
-                    const game = imposterService.addBot(channelId);
-                    const names = game.players.map(p => p.name).join(', ');
-                    return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
-                } catch (e) {
-                    return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
-                }
+            try {
+                const game = imposterService.addBot(channelId);
+                const names = game.players.map(p => p.name).join(', ');
+                return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
+            } catch (e) {
+                return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
             }
-
-            if (sub === 'stop') {
-                imposterService.endGame(channelId);
-                return interaction.reply('🛑 Game stopped.');
-            }
-
-        } catch (error) {
-            logger.error('Imposter command error:', error);
-            const content = `❌ ${error.message}`;
-            if (interaction.deferred || interaction.replied) {
-                return interaction.editReply({ content });
-            }
-            return interaction.reply({ content, ephemeral: true });
         }
+
+        if (sub === 'stop') {
+            imposterService.endGame(channelId);
+            return interaction.reply('🛑 Game stopped.');
+        }
+
+    } catch(error) {
+        logger.error('Imposter command error:', error);
+        const content = `❌ ${error.message}`;
+        if (interaction.deferred || interaction.replied) {
+            return interaction.editReply({ content });
+        }
+        return interaction.reply({ content, ephemeral: true });
     }
+}
 };

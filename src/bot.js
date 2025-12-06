@@ -477,6 +477,31 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Error leaving.', ephemeral: true });
       }
     }
+
+    // Imposter Role Reveal
+    if (customId.startsWith('imposter_reveal_')) {
+      const channelId = customId.replace('imposter_reveal_', '');
+      const game = imposterService.getGame(channelId);
+
+      if (!game) return interaction.reply({ content: '❌ Game not found or ended.', ephemeral: true });
+
+      // Find player
+      const player = game.players.find(p => p.id === interaction.user.id);
+      if (!player) return interaction.reply({ content: '❌ You are not in this game!', ephemeral: true });
+
+      if (player.id === game.imposterId) {
+        return interaction.reply({
+          content: `🤫 **YOU ARE THE IMPOSTER**\n\nCategory: **${game.category}**\nSecret Word: ❓ Unknown\n\nBlend in! Don't let them know you don't know the word!`,
+          ephemeral: true
+        });
+      } else {
+        return interaction.reply({
+          content: `👤 **YOU ARE A CIVILIAN**\n\nCategory: **${game.category}**\nSecret Word: **${game.word}**\n\nDescribe the word without making it too obvious!`,
+          ephemeral: true
+        });
+      }
+    }
+
     return;
   }
 
