@@ -14,7 +14,9 @@ class LLMService {
     }
 
     // Initialize Google Gemini client if using Google
-    if (this.provider === 'google') {
+    // Initialize Google Gemini client if using Google
+    if (this.provider === 'google' || this.provider === 'gemini') {
+      this.provider = 'google'; // Normalize to google
       this.geminiClient = new GoogleGenerativeAI(this.apiKey);
     }
 
@@ -176,9 +178,17 @@ class LLMService {
       const isRateLimit = error.message.includes('429') || error.message.includes('quota') || error.message.includes('Too Many Requests');
       const isServerError = error.message.includes('500') || error.message.includes('503') || error.message.includes('502');
 
-      if ((isRateLimit || isServerError) && this.fallbackProvider) {
-        logger.warn(`Primary LLM provider failed with ${isRateLimit ? 'rate limit' : 'server error'}. Attempting fallback to ${this.fallbackProvider}...`);
-        return this.generateFallbackCompletion(systemPrompt, userPrompt);
+      if ((isRateLimit || isServerError || this.fallbackProvider) && this.fallbackProvider) {
+        // Fallback on any error if fallback is configured, unless it's clearly a client-side issue (handled inside provider methods)
+        // But let's be safe: if it's 400 (Bad Request), maybe don't fallback?
+        // Actually, "No cookie auth..." or other weird errors should trigger fallback too.
+        // Let's broaden the check: if it's NOT a safety block (which is handled in generateGeminiCompletion), try fallback.
+
+        const isSafetyBlock = error.message.includes('Content blocked');
+        if (!isSafetyBlock) {
+          logger.warn(`Primary LLM provider failed (${error.message}). Attempting fallback to ${this.fallbackProvider}...`);
+          return this.generateFallbackCompletion(systemPrompt, userPrompt);
+        }
       }
 
       throw error;
