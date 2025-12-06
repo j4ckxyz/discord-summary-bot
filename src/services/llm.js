@@ -628,21 +628,22 @@ Rules:
     }
   }
 
-  * Generate a clue for the Imposter game
-    * @param { string } word - The secret word(or null if imposter)
-   * @param { string } category - The category
-  * @param { Array < string >} history - Previous clues
-    * @param { boolean } isImposter - Whether the generator is the imposter
-      * @param { Array < string >} forbiddenWords - List of words already used
-        * @returns { Promise < string >} - Single word clue
-          */
+  /**
+   * Generate a clue for the Imposter game
+   * @param {string} word - The secret word (or null if imposter)
+   * @param {string} category - The category
+   * @param {Array<string>} history - Previous clues
+   * @param {boolean} isImposter - Whether the generator is the imposter
+   * @param {Array<string>} forbiddenWords - List of words already used
+   * @returns {Promise<string>} - Single word clue
+   */
   async generateImposterClue(word, category, history, isImposter, forbiddenWords = []) {
-  const historyStr = history.length > 0 ? history.map(h => `- ${h}`).join('\n') : "None yet.";
-  const forbiddenStr = forbiddenWords.length > 0 ? forbiddenWords.join(', ') : "None";
+    const historyStr = history.length > 0 ? history.map(h => `- ${h}`).join('\n') : "None yet.";
+    const forbiddenStr = forbiddenWords.length > 0 ? forbiddenWords.join(', ') : "None";
 
-  let prompt = "";
-  if (isImposter) {
-    prompt = `You are playing the party game "Imposter" (Word Chameleon).
+    let prompt = "";
+    if (isImposter) {
+      prompt = `You are playing the party game "Imposter" (Word Chameleon).
 Role: IMPOSTOR
 Category: ${category}
 Secret Word: UNKNOWN (You must blend in!)
@@ -658,8 +659,8 @@ Your Goal:
 2. DO NOT use any Forbidden Word.
 3. Do not reveal you don't know the word.
 4. Output ONLY the word.`;
-  } else {
-    prompt = `You are playing the party game "Imposter" (Word Chameleon).
+    } else {
+      prompt = `You are playing the party game "Imposter" (Word Chameleon).
 Role: CIVILIAN
 Category: ${category}
 Secret Word: ${word}
@@ -674,14 +675,14 @@ Your Goal:
 1. Output ONE single word (or very short phrase) that hints at "${word}" BUT IS NOT TOO OBVIOUS (don't give it away to the imposter).
 2. DO NOT use any Forbidden Word.
 3. Output ONLY the word.`;
+    }
+
+    const userPrompt = "Your clue:";
+
+    const response = await this.generateCompletion(prompt, userPrompt);
+    // Clean up response (remove punctuation, extra spaces)
+    return response.trim().replace(/^['"]|['"]$/g, '').split('\n')[0];
   }
-
-  const userPrompt = "Your clue:";
-
-  const response = await this.generateCompletion(prompt, userPrompt);
-  // Clean up response (remove punctuation, extra spaces)
-  return response.trim().replace(/^['"]|['"]$/g, '').split('\n')[0];
-}
 
   /**
    * Parse a natural language date/time string into an ISO timestamp
@@ -689,13 +690,13 @@ Your Goal:
    * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid
    */
   async parseTime(input) {
-  const now = new Date();
-  // Weekday, Month Day, Year format (e.g., "Friday, December 8, 2023")
-  const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-  const dateString = now.toLocaleDateString('en-US', dateOptions);
-  const timeString = now.toLocaleTimeString('en-US', { hour12: false }); // 24hr format
+    const now = new Date();
+    // Weekday, Month Day, Year format (e.g., "Friday, December 8, 2023")
+    const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const dateString = now.toLocaleDateString('en-US', dateOptions);
+    const timeString = now.toLocaleTimeString('en-US', { hour12: false }); // 24hr format
 
-  const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
+    const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
     
 Rules:
 1. Return ONLY the ISO 8601 string (e.g., "2023-12-25T15:00:00.000Z").
@@ -706,33 +707,33 @@ Rules:
 6. BE CAREFUL WITH DAYS: If today is Friday and input is "Sunday", that is 2 days from now.
 7. If the input is invalid or cannot be parsed as a time, return the string "null".`;
 
-  const userPrompt = `Current Reference Time: ${dateString} ${timeString}
+    const userPrompt = `Current Reference Time: ${dateString} ${timeString}
 ISO Format: ${now.toISOString()}
 Input to parse: "${input}"
 
 Target ISO Timestamp:`;
 
-  try {
-    let result = await this.generateCompletion(systemPrompt, userPrompt);
-    result = result.trim().replace(/['"`]/g, ''); // Clean up quotes
+    try {
+      let result = await this.generateCompletion(systemPrompt, userPrompt);
+      result = result.trim().replace(/['"`]/g, ''); // Clean up quotes
 
-    if (result.toLowerCase() === 'null') {
+      if (result.toLowerCase() === 'null') {
+        return null;
+      }
+
+      // Validate it's a real date
+      const date = new Date(result);
+      if (isNaN(date.getTime())) {
+        logger.warn(`LLM returned invalid date: ${result}`);
+        return null;
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Error parsing time with LLM:', error);
       return null;
     }
-
-    // Validate it's a real date
-    const date = new Date(result);
-    if (isNaN(date.getTime())) {
-      logger.warn(`LLM returned invalid date: ${result}`);
-      return null;
-    }
-
-    return result;
-  } catch (error) {
-    logger.error('Error parsing time with LLM:', error);
-    return null;
   }
-}
 
   /**
    * Summarise search results for a quick answer
@@ -741,26 +742,26 @@ Target ISO Timestamp:`;
    * @returns {Promise<string>} - Concise summary with sources
    */
   async summariseSearchResults(query, results) {
-  const formattedResults = results.map((r, i) =>
-    `[${i + 1}] ${r.title}: ${r.snippet} (Link: ${r.link})`
-  ).join('\n\n');
+    const formattedResults = results.map((r, i) =>
+      `[${i + 1}] ${r.title}: ${r.snippet} (Link: ${r.link})`
+    ).join('\n\n');
 
-  const systemPrompt = `You are a concise search assistant. 
+    const systemPrompt = `You are a concise search assistant. 
 1. Answer the query based ONLY on the provided results.
 2. Be accurate and direct.
 3. Keep the answer under 200 characters if possible.
 4. Always cite sources using the format: [Source Name](URL).
 5. If the results are irrelevant, say so.`;
 
-  const userPrompt = `Query: ${query}
+    const userPrompt = `Query: ${query}
 
 Results:
 ${formattedResults}
 
 Summarise the answer:`;
 
-  return this.generateCompletion(systemPrompt, userPrompt);
-}
+    return this.generateCompletion(systemPrompt, userPrompt);
+  }
 }
 
 export default new LLMService();
