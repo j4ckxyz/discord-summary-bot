@@ -630,14 +630,16 @@ client.on('messageCreate', async (message) => {
   if (game && game.status === 'PLAYING' && !message.author.bot) {
     const result = imposterService.handleMessage(message.channel.id, message);
 
-    if (result === 'VALID_MOVE') {
-      // Announce the clue that was just played
-      const clueHistory = imposterService.getClueHistory(message.channel.id);
-      const lastClue = game.messages[game.messages.length - 1];
+    if (result.status === 'DUPLICATE') {
+      // Word already used - tell the player to try again
+      const warning = await message.channel.send(`❌ <@${message.author.id}> "${result.word}" was already used! Try a different word.`);
+      setTimeout(() => warning.delete().catch(() => { }), 5000);
+      return;
+    }
 
-      if (lastClue) {
-        await message.channel.send(`✅ **${lastClue.player}**: ${lastClue.content}`);
-      }
+    if (result.status === 'VALID_MOVE') {
+      // Announce the clue that was just played
+      await message.channel.send(`✅ **${result.player}**: ${result.clue}`);
 
       // Process next turn (bot or human prompt)
       await processGameTurn(message.channel);

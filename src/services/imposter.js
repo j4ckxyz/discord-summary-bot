@@ -81,8 +81,8 @@ class ImposterService {
      */
     handleMessage(channelId, message) {
         const game = this.games.get(channelId);
-        if (!game || game.status !== 'PLAYING') return 'IGNORED';
-        if (message.author.bot) return 'IGNORED';
+        if (!game || game.status !== 'PLAYING') return { status: 'IGNORED' };
+        if (message.author.bot) return { status: 'IGNORED' };
 
         // Get current player
         const currentUserId = game.turnOrder[game.turnIndex];
@@ -90,11 +90,16 @@ class ImposterService {
 
         // ONLY accept messages from the current player
         if (message.author.id !== currentUserId) {
-            return 'IGNORED'; // Not their turn - silently ignore
+            return { status: 'IGNORED' };
         }
 
-        // It's the current player's message - accept it as their clue
+        // It's the current player's message
         const content = message.content.trim();
+
+        // Check for duplicate words
+        if (game.usedWords.has(content.toLowerCase())) {
+            return { status: 'DUPLICATE', word: content };
+        }
 
         // Record the clue
         game.messages.push({
@@ -112,7 +117,7 @@ class ImposterService {
             game.round++;
         }
 
-        return 'VALID_MOVE';
+        return { status: 'VALID_MOVE', player: currentPlayer.name, clue: content };
     }
 
     /**
@@ -246,50 +251,64 @@ class ImposterService {
         // Stop the game
         game.status = 'VOTING';
 
-        const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        // Build button rows (max 5 buttons per row)
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
 
-        let voteMessage = "**🚨 EMERGENCY MEETING! 🚨**\n\nVote for the Imposter by reacting with the number!\n\n";
-        game.players.forEach((p, i) => {
-            voteMessage += `${numberEmojis[i]} **${p.name}**\n`;
-        });
-        voteMessage += "\n(Voting ends in 60s)";
+        const buttons = game.players.map((p, i) =>
+            new ButtonBuilder()
+                .setCustomId(`imposter_vote_${channelId}_${i}`)
+                .setLabel(p.name)
+                .setStyle(ButtonStyle.Secondary)
+        );
 
-        const msg = await channel.send(voteMessage);
-
-        for (let i = 0; i < game.players.length; i++) {
-            if (i < numberEmojis.length) await msg.react(numberEmojis[i]);
+        // Split into rows of 5
+        const rows = [];
+        for (let i = 0; i < buttons.length; i += 5) {
+            rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
         }
 
-        // Use a Map to track each voter's choice (ensures one vote per person)
-        const voterChoices = new Map(); // Map<UserId, PlayerIndex>
+        // Show clue recap
+        let clueRecap = '**Clues so far:**\n';
+        game.messages.forEach((m, i) => {
+            clueRecap += `${i + 1}. ${m.player}: ${m.content}\n`;
+        });
 
-        const filter = (reaction, user) => {
-            // Only allow game players to vote, not bots
-            if (user.bot) return false;
-            if (!game.players.some(p => p.id === user.id)) return false;
-            return numberEmojis.slice(0, game.players.length).includes(reaction.emoji.name);
-        };
+        const voteMessage = `**🚨 EMERGENCY MEETING! 🚨**\n\n${clueRecap}\n**Click a button to vote!** (60 seconds)\n_Each player can only vote ONCE._`;
 
-        const collector = msg.createReactionCollector({ filter, time: 60000 });
+        const msg = await channel.send({ content: voteMessage, components: rows });
 
-        collector.on('collect', (reaction, user) => {
-            const index = numberEmojis.indexOf(reaction.emoji.name);
-            if (index >= 0 && index < game.players.length) {
-                // If user already voted for something else, remove their old reaction
-                const previousVote = voterChoices.get(user.id);
-                if (previousVote !== undefined && previousVote !== index) {
-                    // Remove old vote reaction
-                    const oldEmoji = numberEmojis[previousVote];
-                    const oldReaction = msg.reactions.cache.find(r => r.emoji.name === oldEmoji);
-                    if (oldReaction) oldReaction.users.remove(user.id).catch(() => { });
-                }
-                // Record their new vote
-                voterChoices.set(user.id, index);
+        // Track votes with a Map
+        const voterChoices = new Map();
+
+        const collector = msg.createMessageComponentCollector({ time: 60000 });
+
+        collector.on('collect', async (interaction) => {
+            // Only players can vote
+            if (!game.players.some(p => p.id === interaction.user.id)) {
+                return interaction.reply({ content: '❌ You are not in this game!', ephemeral: true });
             }
+
+            // Check if already voted
+            if (voterChoices.has(interaction.user.id)) {
+                return interaction.reply({ content: '❌ You already voted!', ephemeral: true });
+            }
+
+            // Parse vote
+            const parts = interaction.customId.split('_');
+            const playerIndex = parseInt(parts[3], 10);
+            const votedFor = game.players[playerIndex];
+
+            voterChoices.set(interaction.user.id, playerIndex);
+
+            await interaction.reply({ content: `✅ You voted for **${votedFor.name}**`, ephemeral: true });
         });
 
         collector.on('end', async () => {
-            // Count votes from the Map
+            // Disable buttons
+            rows.forEach(row => row.components.forEach(btn => btn.setDisabled(true)));
+            await msg.edit({ components: rows }).catch(() => { });
+
+            // Count votes
             const votes = new Array(game.players.length).fill(0);
             voterChoices.forEach((playerIndex) => {
                 votes[playerIndex]++;
@@ -312,25 +331,23 @@ class ImposterService {
 
             const imposterPlayer = game.players.find(p => p.id === game.imposterId);
 
-            let resultMsg = "**🗳️ VOTING ENDED!**\n\n";
+            let resultMsg = '**🗳️ VOTING ENDED!**\n\n';
             resultMsg += `Votes: ${votes.map((v, i) => `${game.players[i].name}: ${v}`).join(', ')}\n\n`;
 
             if (tie || maxVotes === 0) {
-                resultMsg += `🤷 It was a tie (or no votes)! No one was ejected.\n`;
-                // Resume game
+                resultMsg += '🤷 It was a tie (or no votes)! No one was ejected.\n';
                 game.status = 'PLAYING';
-                resultMsg += `\n**Game Resuming...**`;
+                resultMsg += '\n**Game Resuming...**';
                 await channel.send(resultMsg);
             } else {
                 const ejected = game.players[winnerIndex];
                 const wasImposter = ejected.id === game.imposterId;
                 resultMsg += `👋 **${ejected.name}** was voted out with ${maxVotes} vote(s)!\n\n`;
-                resultMsg += wasImposter ? `✅ **THEY WERE THE IMPOSTER!**` : `❌ **They were NOT the imposter...**`;
+                resultMsg += wasImposter ? '✅ **THEY WERE THE IMPOSTER!**' : '❌ **They were NOT the imposter...**';
 
                 resultMsg += `\n\n🕵️ **The Real Imposter:** ${imposterPlayer.name}`;
                 resultMsg += `\n📖 **The Secret Word:** ${game.word}`;
 
-                // End game
                 this.games.delete(channelId);
                 await channel.send(resultMsg);
             }
