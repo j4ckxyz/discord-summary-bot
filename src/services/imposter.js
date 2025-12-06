@@ -24,6 +24,7 @@ class ImposterService {
             category: null,
             imposterId: null,
             turnIndex: 0,
+            turnOrder: [], // Array of player IDs in order
             round: 0,
             maxRounds: 2, // 2 rounds of clues before voting
             messages: [], // Store clues for recap
@@ -64,7 +65,9 @@ class ImposterService {
         game.imposterId = game.players[imposterIndex].id;
 
         game.status = 'PLAYING';
-        game.turnIndex = Math.floor(Math.random() * game.players.length); // Random start
+        // Create shuffled turn order
+        game.turnOrder = [...game.players].sort(() => Math.random() - 0.5).map(p => p.id);
+        game.turnIndex = 0; // Start with first player in shuffled list
         game.round = 1;
         game.messages = [];
 
@@ -77,30 +80,49 @@ class ImposterService {
      */
     handleMessage(channelId, message) {
         const game = this.games.get(channelId);
-        if (!game || game.status !== 'PLAYING') return true;
+        if (!game || game.status !== 'PLAYING') return 'IGNORED';
 
-        if (message.author.bot) return true; // Ignore bots
-        if (!game.players.some(p => p.id === message.author.id)) return true; // Ignore non-players (maybe?)
+        if (message.author.bot) return 'IGNORED';
+        // Only active players can move, but anyone can chat? 
+        // Let's enforce that only players can trigger "Out of Turn".
+        const isPlayer = game.players.some(p => p.id === message.author.id);
+        if (!isPlayer) return 'IGNORED';
 
-        const currentPlayer = game.players[game.turnIndex];
+        const content = message.content.trim();
 
-        // If it's the current player's turn
-        if (message.author.id === currentPlayer.id) {
-            // Check content length (should be short-ish)
+        // 1. Check if it LOOKS like a move (Single word, no spaces, < 20 chars)
+        // Adjust regex to allow simple punctuation like "apple!" or "apple." but fail "apple pie"
+        const isSingleWord = /^[a-zA-Z0-9'!-?]+$/.test(content);
+        const isShort = content.length <= 20;
+
+        // Ignore commands
+        if (content.startsWith('/') || content.startsWith('!')) return 'IGNORED';
+        if (['vote', 'stop', 'help'].includes(content.toLowerCase())) return 'IGNORED';
+
+        // If it's a sentence or long, treat as CHAT (Ignore)
+        if (!isSingleWord || !isShort) {
+            return 'IGNORED';
+        }
+
+        // It LOOKS like a move. Now check turn.
+        const currentUserId = game.turnOrder[game.turnIndex];
+        const currentPlayer = game.players.find(p => p.id === currentUserId);
+
+        if (message.author.id === currentUserId) {
+            // Valid move!
             game.messages.push({
                 player: currentPlayer.name,
-                content: message.content
+                content: content
             });
-            game.usedWords.add(message.content.toLowerCase());
+            game.usedWords.add(content.toLowerCase());
 
             // Advance turn
-            game.turnIndex = (game.turnIndex + 1) % game.players.length;
+            game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
 
-            // We need to notify next player.
-            // Return 'PROCESS_TURN' to let bot.js know to trigger next turn msg
             return 'VALID_MOVE';
         } else {
-            // Out of turn!
+            // It was a single word sent by the WRONG player. 
+            // This is likely an attempt to play out of turn.
             return 'OUT_OF_TURN';
         }
     }
@@ -174,7 +196,7 @@ class ImposterService {
         game.usedWords.add(clue.toLowerCase());
 
         // Advance turn
-        game.turnIndex = (game.turnIndex + 1) % game.players.length;
+        game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
 
         return { action: 'CLUE', name: currentPlayer.name, clue, isImposter };
     }
@@ -182,13 +204,20 @@ class ImposterService {
     isBotTurn(channelId) {
         const game = this.games.get(channelId);
         if (!game || game.status !== 'PLAYING') return false;
-        return game.players[game.turnIndex].isBot;
+
+        const currentUserId = game.turnOrder[game.turnIndex];
+        const currentPlayer = game.players.find(p => p.id === currentUserId);
+        return currentPlayer.isBot;
     }
 
     getCurrentPlayer(channelId) {
         const game = this.games.get(channelId);
         if (!game) return null;
-        return game.players[game.turnIndex];
+
+        if (game.status === 'LOBBY') return game.players[0]; // Host
+
+        const currentUserId = game.turnOrder[game.turnIndex];
+        return game.players.find(p => p.id === currentUserId);
     }
 
     async startVote(channelId, interaction) {
