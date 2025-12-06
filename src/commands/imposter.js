@@ -35,51 +35,55 @@ export default {
                 return interaction.reply(`✅ **Joined!**\nPlayers (${game.players.length}): ${names}`);
             }
 
-            const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+            if (sub === 'start') {
+                await interaction.deferReply();
+                const game = await imposterService.startGame(channelId, userId);
 
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`imposter_reveal_${channelId}`)
-                        .setLabel('🕵️ Check My Role')
-                        .setStyle(ButtonStyle.Primary)
-                );
+                const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
 
-            const firstPlayer = game.players[game.turnIndex];
-            await interaction.editReply({
-                content: `🎲 **Game Started!**\n\nThe Category is: **${game.category}**\n\n👇 **Click below to see your secret role!** (Don't stream this!)\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`,
-                components: [row]
-            });
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`imposter_reveal_${channelId}`)
+                            .setLabel('🕵️ Check My Role')
+                            .setStyle(ButtonStyle.Primary)
+                    );
 
-            // If first player is bot, trigger loop event
-            if (firstPlayer.isBot) {
-                interaction.client.emit('gameStart', interaction.channel);
+                const firstPlayer = game.players[game.turnIndex];
+                await interaction.editReply({
+                    content: `🎲 **Game Started!**\n\nThe Category is: **${game.category}**\n\n👇 **Click below to see your secret role!** (Don't stream this!)\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`,
+                    components: [row]
+                });
+
+                // If first player is bot, trigger loop event
+                if (firstPlayer.isBot) {
+                    interaction.client.emit('gameStart', interaction.channel);
+                }
+                return;
             }
-            return;
-        }
 
             if (sub === 'addbot') {
-            try {
-                const game = imposterService.addBot(channelId);
-                const names = game.players.map(p => p.name).join(', ');
-                return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
-            } catch (e) {
-                return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
+                try {
+                    const game = imposterService.addBot(channelId);
+                    const names = game.players.map(p => p.name).join(', ');
+                    return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
+                } catch (e) {
+                    return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
+                }
             }
-        }
 
-        if (sub === 'stop') {
-            imposterService.endGame(channelId);
-            return interaction.reply('🛑 Game stopped.');
-        }
+            if (sub === 'stop') {
+                imposterService.endGame(channelId);
+                return interaction.reply('🛑 Game stopped.');
+            }
 
-    } catch(error) {
-        logger.error('Imposter command error:', error);
-        const content = `❌ ${error.message}`;
-        if (interaction.deferred || interaction.replied) {
-            return interaction.editReply({ content });
+        } catch (error) {
+            logger.error('Imposter command error:', error);
+            const content = `❌ ${error.message}`;
+            if (interaction.deferred || interaction.replied) {
+                return interaction.editReply({ content });
+            }
+            return interaction.reply({ content, ephemeral: true });
         }
-        return interaction.reply({ content, ephemeral: true });
     }
-}
 };
