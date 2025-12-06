@@ -684,19 +684,82 @@ Your Goal:
     return response.trim().replace(/^['"]|['"]$/g, '').split('\n')[0];
   }
 
+  * @returns { Promise < { action: string, value: string } >} - Action 'CLUE' or 'VOTE'
+    */
+  async generateImposterTurn(word, category, history, isImposter, forbiddenWords = []) {
+  const historyStr = history.length > 0 ? history.map(h => `- ${h}`).join('\n') : "None yet.";
+  const forbiddenStr = forbiddenWords.length > 0 ? forbiddenWords.join(', ') : "None";
+
+  let prompt = "";
+  if (isImposter) {
+    prompt = `You are playing "Imposter" (Word Chameleon).
+Role: IMPOSTOR
+Category: ${category}
+Secret Word: UNKNOWN (Blend in!)
+
+Previous Clues:
+${historyStr}
+
+Forbidden Words: ${forbiddenStr}
+
+Your Goal:
+1. If you are confident you are being caught, OR if you want to frame someone, you can call a vote.
+2. Otherwise, give a single word clue to blend in.
+
+Output JSON ONLY:
+{
+  "action": "CLUE" or "VOTE",
+  "value": "Your Clue Word" (if CLUE) or "Reason for voting" (if VOTE)
+}`;
+  } else {
+    prompt = `You are playing "Imposter" (Word Chameleon).
+Role: CIVILIAN
+Category: ${category}
+Secret Word: ${word}
+
+Previous Clues:
+${historyStr}
+
+Forbidden Words: ${forbiddenStr}
+
+Your Goal:
+1. If you are >80% sure who the Imposter is based on the clues, call a vote!
+2. Otherwise, give a single word clue.
+
+Output JSON ONLY:
+{
+  "action": "CLUE" or "VOTE",
+  "value": "Your Clue Word" (if CLUE) or "Reason for voting" (if VOTE)
+}`;
+  }
+
+  const userPrompt = "Your move. Output JSON.";
+
+  const response = await this.generateCompletion(prompt, userPrompt);
+  try {
+    const jsonStr = response.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    logger.error('Failed to parse Imposter turn JSON:', response);
+    // Fallback to simple clue generation if JSON fails
+    const simpleClue = await this.generateImposterClue(word, category, history, isImposter, forbiddenWords);
+    return { action: 'CLUE', value: simpleClue };
+  }
+}
+
   /**
    * Parse a natural language date/time string into an ISO timestamp
    * @param {string} input - The natural language input (e.g., "tomorrow at 5pm", "in 2 hours")
    * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid
    */
   async parseTime(input) {
-    const now = new Date();
-    // Weekday, Month Day, Year format (e.g., "Friday, December 8, 2023")
-    const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    const dateString = now.toLocaleDateString('en-US', dateOptions);
-    const timeString = now.toLocaleTimeString('en-US', { hour12: false }); // 24hr format
+  const now = new Date();
+  // Weekday, Month Day, Year format (e.g., "Friday, December 8, 2023")
+  const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  const dateString = now.toLocaleDateString('en-US', dateOptions);
+  const timeString = now.toLocaleTimeString('en-US', { hour12: false }); // 24hr format
 
-    const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
+  const systemPrompt = `You are a strict date/time parser. Your job is to convert natural language time expressions into a specific ISO 8601 timestamp.
     
 Rules:
 1. Return ONLY the ISO 8601 string (e.g., "2023-12-25T15:00:00.000Z").
@@ -707,33 +770,33 @@ Rules:
 6. BE CAREFUL WITH DAYS: If today is Friday and input is "Sunday", that is 2 days from now.
 7. If the input is invalid or cannot be parsed as a time, return the string "null".`;
 
-    const userPrompt = `Current Reference Time: ${dateString} ${timeString}
+  const userPrompt = `Current Reference Time: ${dateString} ${timeString}
 ISO Format: ${now.toISOString()}
 Input to parse: "${input}"
 
 Target ISO Timestamp:`;
 
-    try {
-      let result = await this.generateCompletion(systemPrompt, userPrompt);
-      result = result.trim().replace(/['"`]/g, ''); // Clean up quotes
+  try {
+    let result = await this.generateCompletion(systemPrompt, userPrompt);
+    result = result.trim().replace(/['"`]/g, ''); // Clean up quotes
 
-      if (result.toLowerCase() === 'null') {
-        return null;
-      }
-
-      // Validate it's a real date
-      const date = new Date(result);
-      if (isNaN(date.getTime())) {
-        logger.warn(`LLM returned invalid date: ${result}`);
-        return null;
-      }
-
-      return result;
-    } catch (error) {
-      logger.error('Error parsing time with LLM:', error);
+    if (result.toLowerCase() === 'null') {
       return null;
     }
+
+    // Validate it's a real date
+    const date = new Date(result);
+    if (isNaN(date.getTime())) {
+      logger.warn(`LLM returned invalid date: ${result}`);
+      return null;
+    }
+
+    return result;
+  } catch (error) {
+    logger.error('Error parsing time with LLM:', error);
+    return null;
   }
+}
 
   /**
    * Summarise search results for a quick answer
@@ -742,26 +805,26 @@ Target ISO Timestamp:`;
    * @returns {Promise<string>} - Concise summary with sources
    */
   async summariseSearchResults(query, results) {
-    const formattedResults = results.map((r, i) =>
-      `[${i + 1}] ${r.title}: ${r.snippet} (Link: ${r.link})`
-    ).join('\n\n');
+  const formattedResults = results.map((r, i) =>
+    `[${i + 1}] ${r.title}: ${r.snippet} (Link: ${r.link})`
+  ).join('\n\n');
 
-    const systemPrompt = `You are a concise search assistant. 
+  const systemPrompt = `You are a concise search assistant. 
 1. Answer the query based ONLY on the provided results.
 2. Be accurate and direct.
 3. Keep the answer under 200 characters if possible.
 4. Always cite sources using the format: [Source Name](URL).
 5. If the results are irrelevant, say so.`;
 
-    const userPrompt = `Query: ${query}
+  const userPrompt = `Query: ${query}
 
 Results:
 ${formattedResults}
 
 Summarise the answer:`;
 
-    return this.generateCompletion(systemPrompt, userPrompt);
-  }
+  return this.generateCompletion(systemPrompt, userPrompt);
+}
 }
 
 export default new LLMService();

@@ -541,50 +541,34 @@ async function processGameLoop(channel) {
 
     // Simulate "thinking" time
     await channel.sendTyping();
-    // Wait 1-2 seconds for realism
-    await new Promise(r => setTimeout(r, 1500));
+    const processGameLoop = async (channel) => {
+      // Small delay for realism
+      await new Promise(r => setTimeout(r, 2000));
 
-    const move = await imposterService.playBotTurn(channelId);
-    if (move) {
-      await channel.send(`🤖 **${move.name}** says: "${move.clue}"`);
-    }
-  }
+      // Check if it's a bot turn
+      if (imposterService.isBotTurn(channel.id)) {
+        await channel.sendTyping();
+        await new Promise(r => setTimeout(r, 2000)); // Thinking time
 
-  // Announce next human player
-  const game = imposterService.getGame(channelId);
-  if (game && game.status === 'PLAYING') {
-    const nextPlayer = imposterService.getCurrentPlayer(channelId);
-    if (!nextPlayer.isBot) {
-      await channel.send(`👉 Your turn <@${nextPlayer.id}>!`);
-    }
-  }
-}
+        // Pass full channel object now
+        const turnResult = await imposterService.playBotTurn(channel);
 
-// Event: Message created
-client.on('messageCreate', async (message) => {
-  // Cache the message if caching is enabled (ignore bots)
-  if (!message.author.bot && message.guild) {
-    messageCacheService.cacheMessage(message);
-  }
+        if (turnResult && turnResult.action === 'CLUE') {
+          await channel.send(`🤖 **${turnResult.name}**: ${turnResult.clue}`);
 
-  // Imposter Game Logic
-  // Check if this message is a Move in the game
-  const game = imposterService.getGame(message.channel.id);
-  if (game && game.status === 'PLAYING' && !message.author.bot) {
-    const result = imposterService.handleMessage(message.channel.id, message);
-
-    if (result === 'OUT_OF_TURN') {
-      try {
-        await message.delete();
-        const warning = await message.channel.send(`🤫 Shh <@${message.author.id}>! Wait for your turn.`);
-        setTimeout(() => warning.delete().catch(() => { }), 3000);
-      } catch (e) {
-        await message.react('🤫').catch(() => { });
+          // Validate next turn
+          if (imposterService.isBotTurn(channel.id)) {
+            processGameLoop(channel);
+          }
+        } else if (turnResult && turnResult.action === 'VOTE') {
+          // Vote started, stop loop
+          return;
+        }
       }
-      return; // Stop processing
-    } else if (result === 'VALID_MOVE') {
-      // Human moved. Now check if bots need to play
-      await processGameLoop(message.channel);
+    };
+
+    // Event: Message created
+    client.on('messageCreate', async (message) => {
       return;
     }
   }
