@@ -651,7 +651,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // Need to export this to allow the command to trigger it start
-export { processGameLoop };
+export { processGameTurn };
 
 
 // Event: Message deleted (update cache)
