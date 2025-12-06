@@ -77,7 +77,12 @@ export default {
             }
 
         } catch (error) {
-            return interaction.reply({ content: `❌ ${error.message}`, ephemeral: true });
+            logger.error('Imposter command error:', error);
+            const content = `❌ ${error.message}`;
+            if (interaction.deferred || interaction.replied) {
+                return interaction.editReply({ content });
+            }
+            return interaction.reply({ content, ephemeral: true });
         }
     }
 };
