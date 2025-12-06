@@ -626,6 +626,54 @@ Rules:
   }
 
   /**
+   * Generate a clue for the Imposter game
+   * @param {string} word - The secret word (or null if imposter)
+   * @param {string} category - The category
+   * @param {Array<string>} history - Previous clues
+   * @param {boolean} isImposter - Whether the generator is the imposter
+   * @returns {Promise<string>} - Single word clue
+   */
+  async generateImposterClue(word, category, history, isImposter) {
+    const historyStr = history.length > 0 ? history.map(h => `- ${h}`).join('\n') : "None yet.";
+
+    let prompt = "";
+    if (isImposter) {
+      prompt = `You are playing the party game "Imposter" (Word Chameleon).
+Role: IMPOSTOR
+Category: ${category}
+Secret Word: UNKNOWN (You must blend in!)
+
+Previous Clues from others:
+${historyStr}
+
+Your Goal:
+1. Output ONE single word (or very short phrase) that fits the Category "${category}" and blends in with previous clues.
+2. Do not reveal you don't know the word.
+3. Do not repeat previous clues.
+4. Output ONLY the word.`;
+    } else {
+      prompt = `You are playing the party game "Imposter" (Word Chameleon).
+Role: CIVILIAN
+Category: ${category}
+Secret Word: ${word}
+
+Previous Clues from others:
+${historyStr}
+
+Your Goal:
+1. Output ONE single word (or very short phrase) that hints at "${word}" BUT IS NOT TOO OBVIOUS (don't give it away to the imposter).
+2. Do not repeat previous clues.
+3. Output ONLY the word.`;
+    }
+
+    const userPrompt = "Your clue:";
+
+    const response = await this.generateCompletion(prompt, userPrompt);
+    // Clean up response (remove punctuation, extra spaces)
+    return response.trim().replace(/^['"]|['"]$/g, '').split('\n')[0];
+  }
+
+  /**
    * Parse a natural language date/time string into an ISO timestamp
    * @param {string} input - The natural language input (e.g., "tomorrow at 5pm", "in 2 hours")
    * @returns {Promise<string|null>} - ISO 8601 timestamp or null if invalid

@@ -108,16 +108,71 @@ class ImposterService {
         }
     }
 
+    addBot(channelId) {
+        const game = this.games.get(channelId);
+        if (!game) throw new Error('No game lobby found. Create one first.');
+        if (game.status !== 'LOBBY') throw new Error('Game already started.');
+
+        const botNumber = game.players.filter(p => p.isBot).length + 1;
+        const botName = `Bot ${botNumber}`;
+        const botId = `bot_${Date.now()}_${botNumber}`;
+
+        game.players.push({
+            id: botId,
+            name: botName,
+            score: 0,
+            isBot: true
+        });
+
+        return game;
+    }
+
+    /**
+     * Trigger a bot turn if it is currently a bot's turn
+     * @returns {Promise<string|null>} The clue the bot gave, or null if not bot turn
+     */
+    async playBotTurn(channelId) {
+        const game = this.games.get(channelId);
+        if (!game || game.status !== 'PLAYING') return null;
+
+        const currentPlayer = game.players[game.turnIndex];
+        if (!currentPlayer.isBot) return null;
+
+        // Generate clue
+        const isImposter = currentPlayer.id === game.imposterId;
+        // Get last few messages as context
+        const recentHistory = game.messages.slice(-5).map(m => `${m.player}: ${m.content}`);
+
+        const clue = await llmService.generateImposterClue(
+            game.word,
+            game.category,
+            recentHistory,
+            isImposter
+        );
+
+        // Record move
+        game.messages.push({
+            player: currentPlayer.name,
+            content: clue
+        });
+
+        // Advance turn
+        game.turnIndex = (game.turnIndex + 1) % game.players.length;
+
+        return { name: currentPlayer.name, clue, isImposter };
+    }
+
+    isBotTurn(channelId) {
+        const game = this.games.get(channelId);
+        if (!game || game.status !== 'PLAYING') return false;
+        return game.players[game.turnIndex].isBot;
+    }
+
     // Helper to advance game state manually or check rounds
     // This is a bit simplified. Ideally we track "turns taken" vs "total players"
-    advanceTurn(channelId) {
+    getCurrentPlayer(channelId) {
         const game = this.games.get(channelId);
         if (!game) return null;
-
-        // logic is handled in handleMessage mostly about index, 
-        // but we need to track if a full Round (everyone went) has happened.
-        // For simplicity: We leave it to users to vote or we can track 'moves'
-
         return game.players[game.turnIndex];
     }
 

@@ -504,16 +504,73 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Event: Message created (for prefix and mention commands, and caching)
-client.on('messageCreate', (message) => {
+// Helper to manage game flow (bot turns)
+async function processGameLoop(channel) {
+  const channelId = channel.id;
+
+  // Safety break to prevent infinite loops if something breaks
+  let safetyCounter = 0;
+
+  while (imposterService.isBotTurn(channelId) && safetyCounter < 10) {
+    safetyCounter++;
+
+    // Simulate "thinking" time
+    await channel.sendTyping();
+    // Wait 1-2 seconds for realism
+    await new Promise(r => setTimeout(r, 1500));
+
+    const move = await imposterService.playBotTurn(channelId);
+    if (move) {
+      await channel.send(`🤖 **${move.name}** says: "${move.clue}"`);
+    }
+  }
+
+  // Announce next human player
+  const game = imposterService.getGame(channelId);
+  if (game && game.status === 'PLAYING') {
+    const nextPlayer = imposterService.getCurrentPlayer(channelId);
+    if (!nextPlayer.isBot) {
+      await channel.send(`👉 Your turn <@${nextPlayer.id}>!`);
+    }
+  }
+}
+
+// Event: Message created
+client.on('messageCreate', async (message) => {
   // Cache the message if caching is enabled (ignore bots)
   if (!message.author.bot && message.guild) {
     messageCacheService.cacheMessage(message);
   }
 
+  // Imposter Game Logic
+  // Check if this message is a Move in the game
+  const game = imposterService.getGame(message.channel.id);
+  if (game && game.status === 'PLAYING' && !message.author.bot) {
+    const result = imposterService.handleMessage(message.channel.id, message);
+
+    if (result === 'OUT_OF_TURN') {
+      try {
+        await message.delete();
+        const warning = await message.channel.send(`🤫 Shh <@${message.author.id}>! Wait for your turn.`);
+        setTimeout(() => warning.delete().catch(() => { }), 3000);
+      } catch (e) {
+        await message.react('🤫').catch(() => { });
+      }
+      return; // Stop processing
+    } else if (result === 'VALID_MOVE') {
+      // Human moved. Now check if bots need to play
+      await processGameLoop(message.channel);
+      return;
+    }
+  }
+
   // Handle text commands
   handleTextCommand(message);
 });
+
+// Need to export this to allow the command to trigger it start
+export { processGameLoop };
+
 
 // Event: Message deleted (update cache)
 client.on('messageDelete', (message) => {
@@ -536,6 +593,11 @@ client.on('error', (error) => {
 
 process.on('unhandledRejection', (error) => {
   logger.error('Unhandled promise rejection:', error);
+});
+
+// Event: Custom Game Events
+client.on('gameStart', async (channel) => {
+  await processGameLoop(channel);
 });
 
 // Start the bot

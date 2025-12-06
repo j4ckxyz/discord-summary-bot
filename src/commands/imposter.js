@@ -13,6 +13,8 @@ export default {
         .addSubcommand(sub =>
             sub.setName('start').setDescription('Start the game (Host only)'))
         .addSubcommand(sub =>
+            sub.setName('addbot').setDescription('Add an AI bot player'))
+        .addSubcommand(sub =>
             sub.setName('stop').setDescription('Stop the game')),
 
     async execute(interaction) {
@@ -50,7 +52,23 @@ export default {
                 await Promise.all(dmPromises);
 
                 const firstPlayer = game.players[game.turnIndex];
-                return interaction.editReply(`🎲 **Game Started!** Check your DMs!\n\nThe Category is: **${game.category}**\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`);
+                await interaction.editReply(`🎲 **Game Started!** Check your DMs!\n\nThe Category is: **${game.category}**\n\n👉 **It is ${firstPlayer.name}'s turn!** Type a single word clue in this channel.`);
+
+                // If first player is bot, trigger loop event
+                if (firstPlayer.isBot) {
+                    interaction.client.emit('gameStart', interaction.channel);
+                }
+                return;
+            }
+
+            if (sub === 'addbot') {
+                try {
+                    const game = imposterService.addBot(channelId);
+                    const names = game.players.map(p => p.name).join(', ');
+                    return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
+                } catch (e) {
+                    return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
+                }
             }
 
             if (sub === 'stop') {
