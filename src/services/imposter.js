@@ -260,19 +260,43 @@ class ImposterService {
             if (i < numberEmojis.length) await msg.react(numberEmojis[i]);
         }
 
-        const collector = msg.createReactionCollector({ time: 60000 });
+        // Use a Map to track each voter's choice (ensures one vote per person)
+        const voterChoices = new Map(); // Map<UserId, PlayerIndex>
 
-        collector.on('end', async (collected) => {
-            const votes = new Array(game.players.length).fill(0);
+        const filter = (reaction, user) => {
+            // Only allow game players to vote, not bots
+            if (user.bot) return false;
+            if (!game.players.some(p => p.id === user.id)) return false;
+            return numberEmojis.slice(0, game.players.length).includes(reaction.emoji.name);
+        };
 
-            collected.forEach((reaction) => {
-                const index = numberEmojis.indexOf(reaction.emoji.name);
-                if (index >= 0 && index < game.players.length) {
-                    votes[index] = reaction.count - 1; // Subtract bot's reaction
+        const collector = msg.createReactionCollector({ filter, time: 60000 });
+
+        collector.on('collect', (reaction, user) => {
+            const index = numberEmojis.indexOf(reaction.emoji.name);
+            if (index >= 0 && index < game.players.length) {
+                // If user already voted for something else, remove their old reaction
+                const previousVote = voterChoices.get(user.id);
+                if (previousVote !== undefined && previousVote !== index) {
+                    // Remove old vote reaction
+                    const oldEmoji = numberEmojis[previousVote];
+                    const oldReaction = msg.reactions.cache.find(r => r.emoji.name === oldEmoji);
+                    if (oldReaction) oldReaction.users.remove(user.id).catch(() => { });
                 }
+                // Record their new vote
+                voterChoices.set(user.id, index);
+            }
+        });
+
+        collector.on('end', async () => {
+            // Count votes from the Map
+            const votes = new Array(game.players.length).fill(0);
+            voterChoices.forEach((playerIndex) => {
+                votes[playerIndex]++;
             });
 
-            let maxVotes = -1;
+            // Find winner
+            let maxVotes = 0;
             let winnerIndex = -1;
             let tie = false;
 
@@ -281,7 +305,7 @@ class ImposterService {
                     maxVotes = votes[i];
                     winnerIndex = i;
                     tie = false;
-                } else if (votes[i] === maxVotes) {
+                } else if (votes[i] === maxVotes && votes[i] > 0) {
                     tie = true;
                 }
             }
@@ -289,6 +313,8 @@ class ImposterService {
             const imposterPlayer = game.players.find(p => p.id === game.imposterId);
 
             let resultMsg = "**🗳️ VOTING ENDED!**\n\n";
+            resultMsg += `Votes: ${votes.map((v, i) => `${game.players[i].name}: ${v}`).join(', ')}\n\n`;
+
             if (tie || maxVotes === 0) {
                 resultMsg += `🤷 It was a tie (or no votes)! No one was ejected.\n`;
                 // Resume game
@@ -298,7 +324,7 @@ class ImposterService {
             } else {
                 const ejected = game.players[winnerIndex];
                 const wasImposter = ejected.id === game.imposterId;
-                resultMsg += `👋 **${ejected.name}** was voted out with ${maxVotes} votes!\n\n`;
+                resultMsg += `👋 **${ejected.name}** was voted out with ${maxVotes} vote(s)!\n\n`;
                 resultMsg += wasImposter ? `✅ **THEY WERE THE IMPOSTER!**` : `❌ **They were NOT the imposter...**`;
 
                 resultMsg += `\n\n🕵️ **The Real Imposter:** ${imposterPlayer.name}`;
