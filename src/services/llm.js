@@ -607,11 +607,14 @@ Keep it concise. If no one mentioned availability, say "No availability discussi
 Your job is to pick a random, safe, family-friendly secret word and its broad category.
 
 Rules:
-1. Category should be broad (e.g. "Food", "Animal", "Place").
-2. Word should be specific but common (e.g. "Pizza", "Giraffe", "Paris").
-3. Output ONLY valid JSON: {"category": "...", "word": "..."}`;
+1. Category should be broad (e.g. "Food", "Animal", "Place", "Household Item", "Job", "Vehicle").
+2. Word should be specific but common enough for general knowledge.
+3. AVOID repeating common examples (e.g. NO Pizza, Dog, Apple, Car). Be creative!
+4. Output ONLY valid JSON: {"category": "...", "word": "..."}`;
 
-    const userPrompt = `Generate a new word for the game.`;
+    // Add randomness to prompt to prevent caching and encourage variety
+    const seed = Math.floor(Math.random() * 100000);
+    const userPrompt = `Generate a new, unique word for the game. Random seed: ${seed}`;
 
     // Use a strict JSON parser if possible, or just parse text
     const result = await this.generateCompletion(systemPrompt, userPrompt);
