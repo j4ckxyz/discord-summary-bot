@@ -15,6 +15,8 @@ export default {
         .addSubcommand(sub =>
             sub.setName('addbot').setDescription('Add an AI bot player'))
         .addSubcommand(sub =>
+            sub.setName('vote').setDescription('Start a vote to eject the imposter'))
+        .addSubcommand(sub =>
             sub.setName('stop').setDescription('Stop the game')),
 
     async execute(interaction) {
@@ -69,6 +71,16 @@ export default {
                     return interaction.reply(`🤖 **Bot Added!**\nPlayers: ${names}`);
                 } catch (e) {
                     return interaction.reply({ content: `❌ ${e.message}`, ephemeral: true });
+                }
+            }
+
+            if (sub === 'vote') {
+                try {
+                    await interaction.reply('🗳️ **Voting Started!**');
+                    await imposterService.startVote(channelId, interaction);
+                    return;
+                } catch (e) {
+                    return interaction.followUp({ content: `❌ ${e.message}`, ephemeral: true });
                 }
             }
 
