@@ -17,6 +17,17 @@ class LLMService {
     if (this.provider === 'google') {
       this.geminiClient = new GoogleGenerativeAI(this.apiKey);
     }
+
+    // Fallback configuration
+    this.fallbackProvider = process.env.LLM_FALLBACK_PROVIDER;
+    this.fallbackApiKey = process.env.LLM_FALLBACK_API_KEY;
+    this.fallbackModel = process.env.LLM_FALLBACK_MODEL;
+    this.fallbackBaseUrl = process.env.LLM_FALLBACK_BASE_URL;
+
+    if (this.fallbackProvider && !this.fallbackApiKey) {
+      logger.warn('LLM_FALLBACK_PROVIDER is set but LLM_FALLBACK_API_KEY is missing. Fallback will be disabled.');
+      this.fallbackProvider = null;
+    }
   }
 
   /**
@@ -153,10 +164,89 @@ class LLMService {
    * @returns {Promise<string>} - The generated text
    */
   async generateCompletion(systemPrompt, userPrompt) {
-    if (this.provider === 'google') {
-      return this.generateGeminiCompletion(systemPrompt, userPrompt);
+    try {
+      if (this.provider === 'google') {
+        return await this.generateGeminiCompletion(systemPrompt, userPrompt);
+      } else {
+        return await this.generateOpenAICompletion(systemPrompt, userPrompt);
+      }
+    } catch (error) {
+      // Check if we should fallback
+      // 429 = Rate Limit, 5xx = Server Error
+      const isRateLimit = error.message.includes('429') || error.message.includes('quota') || error.message.includes('Too Many Requests');
+      const isServerError = error.message.includes('500') || error.message.includes('503') || error.message.includes('502');
+
+      if ((isRateLimit || isServerError) && this.fallbackProvider) {
+        logger.warn(`Primary LLM provider failed with ${isRateLimit ? 'rate limit' : 'server error'}. Attempting fallback to ${this.fallbackProvider}...`);
+        return this.generateFallbackCompletion(systemPrompt, userPrompt);
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Generate a completion using the fallback provider
+   * @param {string} systemPrompt 
+   * @param {string} userPrompt 
+   * @returns {Promise<string>}
+   */
+  async generateFallbackCompletion(systemPrompt, userPrompt) {
+    const startTime = Date.now();
+    const promptLength = systemPrompt.length + userPrompt.length;
+
+    let baseUrl;
+    if (this.fallbackProvider === 'openrouter') {
+      baseUrl = 'https://openrouter.ai/api/v1';
+    } else if (this.fallbackProvider === 'openai') {
+      baseUrl = 'https://api.openai.com/v1';
     } else {
-      return this.generateOpenAICompletion(systemPrompt, userPrompt);
+      baseUrl = this.fallbackBaseUrl || 'https://openrouter.ai/api/v1';
+    }
+
+    logger.llm(`FALLBACK (${this.fallbackProvider}) API call starting | model=${this.fallbackModel} | prompt_chars=${promptLength}`);
+
+    try {
+      // Reuse the OpenAI-compatible logic for fallback since most providers support it
+      // We can't reuse generateOpenAICompletion directly easily because it uses instance vars, 
+      // so we duplicate the axios call here with fallback credentials.
+
+      const response = await axios.post(
+        `${baseUrl}/chat/completions`,
+        {
+          model: this.fallbackModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: 1000,
+          temperature: 0.7
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.fallbackApiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://github.com/discord-summary-bot',
+            'X-Title': 'Discord Summary Bot'
+          }
+        }
+      );
+
+      const responseText = response.data.choices[0].message.content;
+      const elapsed = Date.now() - startTime;
+      const usage = response.data.usage;
+
+      if (usage) {
+        logger.llm(`FALLBACK (${this.fallbackProvider}) API call complete | response_chars=${responseText.length} | tokens_in=${usage.prompt_tokens} | tokens_out=${usage.completion_tokens} | time=${elapsed}ms`);
+      } else {
+        logger.llm(`FALLBACK (${this.fallbackProvider}) API call complete | response_chars=${responseText.length} | time=${elapsed}ms`);
+      }
+
+      return responseText;
+    } catch (error) {
+      const elapsed = Date.now() - startTime;
+      logger.llm(`FALLBACK (${this.fallbackProvider}) API call FAILED | error=${error.response?.data?.error?.message || error.message} | time=${elapsed}ms`, 'ERROR');
+      throw new Error(`Fallback provider failed: ${error.message}`);
     }
   }
 
