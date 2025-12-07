@@ -800,20 +800,6 @@ Your Goal:
 Role: IMPOSTOR
 Category: ${category}
 Secret Word: UNKNOWN (Blend in!)
-
-Previous Clues:
-${historyStr}
-
-Forbidden Words: ${forbiddenStr}
-
-Your Goal:
-1. If you are confident you are being caught, OR if you want to frame someone, you can call a vote.
-2. Otherwise, give a single word clue to blend in.
-
-Output JSON ONLY:
-{
-  "action": "CLUE" or "VOTE",
-  "value": "Your Clue Word" (if CLUE) or "Reason for voting" (if VOTE)
 }`;
     } else {
       prompt = `You are playing "Imposter" (Word Chameleon).

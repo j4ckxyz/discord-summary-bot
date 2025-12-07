@@ -245,7 +245,7 @@ class ImposterService {
 
         // Check limits
         const calledCount = game.meetingsCalled.get(callerId) || 0;
-
+        const calledCount = game.meetingsCalled.get(callerId) || 0;
         if (calledCount >= 3) {
             throw new Error('You have already called 3 Emergency Meetings this game!');
         }
@@ -361,57 +361,60 @@ class ImposterService {
 
                 this.games.delete(channelId);
                 await channel.send(resultMsg);
+                async resolveBotVotes(channelId, voterChoices, collector) {
+                    const game = this.games.get(channelId);
+                    if (!game || game.status !== 'VOTING') return;
 
-            }
-        });
-    }
+                    const bots = game.players.filter(p => p.isBot);
+                    if (bots.length === 0) return;
 
-    async resolveBotVotes(channelId, voterChoices, collector) {
-        const game = this.games.get(channelId);
-        if (!game || game.status !== 'VOTING') return;
+                    // Wait a bit for humans to start voting
+                    await new Promise(r => setTimeout(r, 5000));
 
-        const bots = game.players.filter(p => p.isBot);
-        if (bots.length === 0) return;
+                    for (const bot of bots) {
+                        if (game.status !== 'VOTING') break; // Vote might have ended
 
-        // Wait a bit for humans to start voting
-        await new Promise(r => setTimeout(r, 5000));
+                        // Small random delay for realism
+                        await new Promise(r => setTimeout(r, Math.random() * 5000 + 2000));
 
-        for (const bot of bots) {
-            if (game.status !== 'VOTING') break; // Vote might have ended
+                        // Generate vote
+                        const isImposter = bot.id === game.imposterId;
+                        const history = game.messages.map(m => `${m.player}: ${m.content}`);
 
-            // Small random delay for realism
-            await new Promise(r => setTimeout(r, Math.random() * 5000 + 2000));
+                        // Only pass necessary info to LLM
+                        const activePlayers = game.players.map(p => ({ id: p.id, name: p.name }));
 
-            // Generate vote
-            const isImposter = bot.id === game.imposterId;
-            const history = game.messages.map(m => `${m.player}: ${m.content}`);
+                        try {
+                            const votedId = await llmService.generateImposterVote(
+                                game.word,
+                                game.category,
+                                history,
+                                isImposter,
+                                activePlayers
+                            );
 
-            // Only pass necessary info to LLM
-            const activePlayers = game.players.map(p => ({ id: p.id, name: p.name }));
+                            if (votedId) {
+                                // Find index of voted player
+                                const votedIndex = game.players.findIndex(p => p.id === votedId);
+                                if (votedIndex !== -1) {
+                                    voterChoices.set(bot.id, votedIndex);
+                                    const votedName = game.players[votedIndex].name;
+                                    // Optional: can announce bot voted, but maybe spammy. 
+                                    // Instead, just verify if all voted.
+                                }
+                            }
+                        } catch (e) {
+                            // Bot failed to vote, just skip
+                        }
 
-            try {
-                const votedId = await llmService.generateImposterVote(
-                    game.word,
-                    game.category,
-                    history,
-                    isImposter,
-                    activePlayers
-                );
-
-                if (votedId) {
-                    // Find index of voted player
-                    const votedIndex = game.players.findIndex(p => p.id === votedId);
-                    if (votedIndex !== -1) {
-                        voterChoices.set(bot.id, votedIndex);
+                        // Check if everyone voted (bots + humans)
+                        if (voterChoices.size === game.players.length) {
+                            collector.stop('all_voted');
+                        }
                     }
                 }
-            } catch (e) { }
-
-            // Check if everyone voted (bots + humans)
-            if (voterChoices.size === game.players.length) {
-                collector.stop('all_voted');
             }
-        }
+        });
     }
 
     endGame(channelId) {
