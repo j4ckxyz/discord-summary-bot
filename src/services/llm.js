@@ -163,9 +163,20 @@ class LLMService {
    * Generate a completion using the configured LLM
    * @param {string} systemPrompt - The system prompt
    * @param {string} userPrompt - The user prompt
+   * @param {boolean} useFastModel - Whether to prefer the fallback/fast model
    * @returns {Promise<string>} - The generated text
    */
-  async generateCompletion(systemPrompt, userPrompt) {
+  async generateCompletion(systemPrompt, userPrompt, useFastModel = false) {
+    // If fast model requested and available, try it first
+    if (useFastModel && this.fallbackProvider) {
+      try {
+        return await this.generateFallbackCompletion(systemPrompt, userPrompt);
+      } catch (error) {
+        logger.warn(`Fast model failed, falling back to primary: ${error.message}`);
+        // If fast model fails, continue to primary
+      }
+    }
+
     try {
       if (this.provider === 'google') {
         return await this.generateGeminiCompletion(systemPrompt, userPrompt);
@@ -183,6 +194,9 @@ class LLMService {
         // But let's be safe: if it's 400 (Bad Request), maybe don't fallback?
         // Actually, "No cookie auth..." or other weird errors should trigger fallback too.
         // Let's broaden the check: if it's NOT a safety block (which is handled in generateGeminiCompletion), try fallback.
+
+        // Check if we already tried fallback above (if useFastModel was true)
+        if (useFastModel) throw error; // Don't retry if we started with fallback and it failed (or we wouldn't be here)
 
         const isSafetyBlock = error.message.includes('Content blocked');
         if (!isSafetyBlock) {
@@ -258,6 +272,58 @@ class LLMService {
       logger.llm(`FALLBACK (${this.fallbackProvider}) API call FAILED | error=${error.response?.data?.error?.message || error.message} | time=${elapsed}ms`, 'ERROR');
       throw new Error(`Fallback provider failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Generate a voting decision for a bot
+   * @param {string} word - Secret word (or null)
+   * @param {string} category - Category
+   * @param {Array<string>} history - Clue history
+   * @param {boolean} isImposter - Role
+   * @param {Array<object>} players - List of {id, name}
+   * @param {boolean} useFast - Whether to use fast model
+   * @returns {Promise<string|null>} - ID of player to vote for, or null to skip
+   */
+  async generateImposterVote(word, category, history, isImposter, players, useFast = true) {
+    const historyStr = history.length > 0 ? history.map(h => `- ${h}`).join('\n') : "None yet.";
+    const playersStr = players.map(p => `${p.name} (ID: ${p.id})`).join('\n');
+
+    let prompt = "";
+    if (isImposter) {
+      prompt = `You are the IMPOSTER in "Word Chameleon". A vote has been called.
+Category: ${category}
+Secret Word: UNKNOWN
+
+Clues:
+${historyStr}
+
+Players:
+${playersStr}
+
+Goal: Vote for a civilian to get them ejected. If you are not sure, or it's risky, verify if "skip" is better.
+Output: The ID of the player to vote for, or "skip".`;
+    } else {
+      prompt = `You are a CIVILIAN in "Word Chameleon". A vote has been called.
+Category: ${category}
+Secret Word: ${word}
+
+Clues:
+${historyStr}
+
+Players:
+${playersStr}
+
+Goal: Vote for the player whose clue makes the LEAST sense given the secret word "${word}". If everyone seems fine, output "skip".
+Output: The ID of the player to vote for, or "skip".`;
+    }
+
+    const vote = await this.generateCompletion(prompt, "Vote decision (ID or skip):", useFast);
+    const cleaned = vote.trim().replace(/['"]/g, '');
+    if (cleaned.toLowerCase().includes('skip')) return null;
+
+    // Find matching player ID in the text to be safe
+    const target = players.find(p => cleaned.includes(p.id));
+    return target ? target.id : null;
   }
 
   /**

@@ -387,7 +387,10 @@ class ImposterService {
             const history = game.messages.map(m => `${m.player}: ${m.content}`);
 
             // Only pass necessary info to LLM
-            const activePlayers = game.players.map(p => ({ id: p.id, name: p.name }));
+            // Filter out self so bot doesn't vote for itself
+            const activePlayers = game.players
+                .filter(p => p.id !== bot.id)
+                .map(p => ({ id: p.id, name: p.name }));
 
             try {
                 const votedId = await llmService.generateImposterVote(
@@ -395,7 +398,8 @@ class ImposterService {
                     game.category,
                     history,
                     isImposter,
-                    activePlayers
+                    activePlayers,
+                    true // Use fast/fallback model
                 );
 
                 if (votedId) {
