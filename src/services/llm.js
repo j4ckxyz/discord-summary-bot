@@ -704,13 +704,15 @@ Keep it concise. If no one mentioned availability, say "No availability discussi
    */
   async generateImposterGame() {
     const systemPrompt = `You are a Game Master for the party game "Imposter" (Word Chameleon).
-Your job is to pick a random, safe, family-friendly secret word and its broad category.
+    Your job is to pick a random, safe, family-friendly secret word and its broad category.
+    You must also provide a "hint" word for the Imposter. This hint should be related to the secret word (same category or context) but NOT the word itself.
 
-Rules:
-1. Category should be broad (e.g. "Food", "Animal", "Place", "Household Item", "Job", "Vehicle").
-2. Word should be specific but common enough for general knowledge.
-3. AVOID repeating common examples (e.g. NO Pizza, Dog, Apple, Car). Be creative!
-4. Output ONLY valid JSON: {"category": "...", "word": "..."}`;
+    Rules:
+    1. Category should be broad (e.g. "Food", "Animal", "Place", "Household Item", "Job", "Vehicle").
+    2. Word should be specific but common enough for general knowledge.
+    3. Hint should be a single word that helps the Imposter guess the context, but isn't too obvious to civilians if they hear it (though only the imposter sees it).
+    4. AVOID repeating common examples (e.g. NO Pizza, Dog, Apple, Car). Be creative!
+    5. Output ONLY valid JSON: {"category": "...", "word": "...", "hint": "..."}`;
 
     // Add randomness to prompt to prevent caching and encourage variety
     const seed = Math.floor(Math.random() * 100000);
@@ -724,7 +726,7 @@ Rules:
       return JSON.parse(jsonStr);
     } catch (e) {
       logger.error('Failed to parse Imposter game JSON:', result);
-      return { category: 'Food', word: 'Pizza' }; // Fallback
+      return { category: 'Food', word: 'Pizza', hint: 'Italian' }; // Fallback
     }
   }
 

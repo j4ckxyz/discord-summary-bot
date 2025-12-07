@@ -22,6 +22,7 @@ class ImposterService {
             hostId: creatorId,
             word: null,
             category: null,
+            hint: null,
             imposterId: null,
             turnIndex: 0,
             turnOrder: [], // Array of player IDs in order
@@ -59,6 +60,7 @@ class ImposterService {
         const data = await llmService.generateImposterGame();
         game.word = data.word;
         game.category = data.category;
+        game.hint = data.hint;
 
         // Pick Imposter
         const imposterIndex = Math.floor(Math.random() * game.players.length);
@@ -301,6 +303,11 @@ class ImposterService {
             voterChoices.set(interaction.user.id, playerIndex);
 
             await interaction.reply({ content: `✅ You voted for **${votedFor.name}**`, ephemeral: true });
+
+            // Check if everyone voted
+            if (voterChoices.size === game.players.length) {
+                collector.stop('all_voted');
+            }
         });
 
         collector.on('end', async () => {

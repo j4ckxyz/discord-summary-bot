@@ -544,7 +544,7 @@ client.on('interactionCreate', async (interaction) => {
 
       if (player.id === game.imposterId) {
         return interaction.reply({
-          content: `🤫 **YOU ARE THE IMPOSTER**\n\nCategory: **${game.category}**\nSecret Word: ❓ Unknown\n\nBlend in! Don't let them know you don't know the word!`,
+          content: `🤫 **YOU ARE THE IMPOSTER**\n\nCategory: **${game.category}**\nSecret Word: ❓ Unknown\nHint Word: **${game.hint || 'None'}**\n\nBlend in! Don't let them know you don't know the word!`,
           ephemeral: true
         });
       } else {

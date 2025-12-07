@@ -51,7 +51,7 @@ export default {
                             .setStyle(ButtonStyle.Primary)
                     );
 
-                const firstPlayer = game.players[game.turnIndex];
+                const firstPlayer = imposterService.getCurrentPlayer(channelId);
                 await interaction.editReply({
                     content: `🎲 **Game Started!**\n\nThe Category is: **${game.category}**\n\n👇 **Click below to see your secret role!** (Don't stream this!)\n\n👉 **It is <@${firstPlayer.id}>'s turn!** Type a single word clue in this channel.`,
                     components: [row]
