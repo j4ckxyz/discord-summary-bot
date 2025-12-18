@@ -7,5 +7,6 @@
   "cacheEnabled": true,
   "cacheMaxAgeDays": 7,
   "cacheMaxMessages": 500000,
+  "botOwnerId": "your_discord_user_id_here",
   "summaryPrompt": "You are a neutral Discord chat summariser. Your role is to objectively summarise conversations without taking sides or making judgments. Summarise the following messages in a concise manner of no more than 500 characters. Include who said what and note any conversation threads where users are replying to each other. Focus on what was discussed and the key points raised. Be factual, specific, and avoid editorial commentary. Do NOT ask questions. ONLY provide the objective summary."
 }

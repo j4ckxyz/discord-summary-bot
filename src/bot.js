@@ -7,6 +7,7 @@ import topicCommand from './commands/topic.js';
 import explainCommand from './commands/explain.js';
 import remindCommand from './commands/remind.js';
 import todoCommand from './commands/todo.js';
+import viewallCommand from './commands/viewall.js';
 
 import eventCommand from './commands/event.js';
 import configCommand from './commands/config.js';
@@ -55,6 +56,7 @@ const commands = [
   explainCommand,
   remindCommand,
   todoCommand,
+  viewallCommand,
 
   eventCommand,
   configCommand,
@@ -432,7 +434,7 @@ client.once('ready', async () => {
   messageCacheService.startMaintenanceSchedule();
 
   logger.separator();
-  logger.bot('Bot is ready! Commands: /summary, /remind, /todo, /event, /poll, /config, /topic, /catchup');
+  logger.bot('Bot is ready! Commands: /summary, /remind, /todo, /event, /poll, /config, /topic, /catchup, /viewall');
   logger.separator();
 });
 
@@ -528,6 +530,36 @@ client.on('interactionCreate', async (interaction) => {
       } catch (e) {
         logger.error('Reminder error', e);
         return interaction.reply({ content: '❌ Error setting reminder.', ephemeral: true });
+      }
+    }
+
+    // ViewAll Server Select
+    if (customId === 'viewall_server_select') {
+      const selectedGuildId = interaction.values[0];
+      
+      try {
+        // Verify user is bot owner
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        // Update the message to show loading
+        await interaction.update({
+          content: 'Fetching messages...',
+          components: []
+        });
+
+        // Display messages from selected server
+        await viewallCommand.displayServerMessages(interaction, selectedGuildId, 50);
+
+      } catch (e) {
+        logger.error('ViewAll select error', e);
+        return interaction.reply({ content: '❌ Error fetching server messages.', ephemeral: true });
       }
     }
 
