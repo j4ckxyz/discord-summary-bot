@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder } from 'discord.js'
+import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder, AttachmentBuilder } from 'discord.js'
 import logger from '../utils/logger.js'
 import { config } from '../utils/config.js'
 import llmService from '../services/llm.js'
@@ -14,7 +14,8 @@ export default {
         .addChoices(
           { name: 'View Messages', value: 'view' },
           { name: 'Search Messages', value: 'search' },
-          { name: 'Summarize Channel', value: 'summary' }
+          { name: 'Summarize Channel', value: 'summary' },
+          { name: 'Export Chat History', value: 'export' }
         )
     )
     .addStringOption(option =>
@@ -102,6 +103,12 @@ export default {
               description: 'Get an AI summary of a specific channel',
               value: 'summary',
               emoji: '📝'
+            },
+            {
+              label: 'Export Chat History',
+              description: 'Download complete chat history as a file',
+              value: 'export',
+              emoji: '💾'
             }
           ])
 
@@ -159,6 +166,9 @@ export default {
           actionDescription = `Searching for keyword: **${keyword}** (limit: ${limit})`
         } else if (action === 'summary') {
           actionDescription = `Summarizing channel: **${channelOption}** (${limit} messages)`
+        } else if (action === 'export') {
+          const format = interaction.options.getString('format') || 'txt'
+          actionDescription = `Exporting **${limit}** messages as **${format.toUpperCase()}**`
         }
 
         await interaction.reply({
@@ -174,6 +184,9 @@ export default {
         await this.searchServerMessages(interaction, serverOption, keyword, limit)
       } else if (action === 'summary') {
         await this.summarizeChannel(interaction, serverOption, channelOption, limit)
+      } else if (action === 'export') {
+        const format = interaction.options.getString('format') || 'txt'
+        await this.exportServerMessages(interaction, serverOption, format, limit)
       } else {
         await this.displayServerMessages(interaction, serverOption, limit, keyword)
       }
@@ -549,5 +562,257 @@ export default {
         await interaction.reply({ content: errorContent, ephemeral: true })
       }
     }
+  },
+
+  /**
+   * Export server messages to a file
+   */
+  async exportServerMessages(interaction, guildId, format = 'txt', limit = 1000) {
+    try {
+      const guild = interaction.client.guilds.cache.get(guildId)
+      
+      if (!guild) {
+        await interaction.reply({
+          content: 'Server not found. The bot may have left this server.',
+          ephemeral: true
+        })
+        return
+      }
+
+      // Defer reply as exporting might take time
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true })
+      }
+
+      await interaction.editReply(`Collecting messages from **${guild.name}**...`)
+
+      // Get all text channels in the guild
+      const textChannels = guild.channels.cache.filter(
+        channel => channel.isTextBased() && !channel.isThread()
+      )
+
+      if (textChannels.size === 0) {
+        await interaction.editReply(`No accessible text channels found in **${guild.name}**.`)
+        return
+      }
+
+      // Collect all messages from all channels
+      const allMessages = []
+      let channelCount = 0
+      
+      for (const [channelId, channel] of textChannels) {
+        try {
+          channelCount++
+          await interaction.editReply(`Fetching messages... (${channelCount}/${textChannels.size} channels)`)
+          
+          // Fetch up to 100 messages per channel (Discord API limit per request)
+          const messages = await channel.messages.fetch({ limit: Math.min(limit, 100) })
+          
+          messages.forEach(msg => {
+            allMessages.push({
+              id: msg.id,
+              content: msg.content || '',
+              author: msg.author.tag,
+              authorId: msg.author.id,
+              authorBot: msg.author.bot,
+              channel: channel.name,
+              channelId: channel.id,
+              timestamp: msg.createdTimestamp,
+              createdAt: msg.createdAt.toISOString(),
+              attachments: Array.from(msg.attachments.values()).map(att => ({
+                name: att.name,
+                url: att.url,
+                size: att.size
+              })),
+              embeds: msg.embeds.map(emb => ({
+                title: emb.title,
+                description: emb.description,
+                url: emb.url
+              })),
+              reactions: msg.reactions.cache.size > 0 ? Array.from(msg.reactions.cache.values()).map(r => ({
+                emoji: r.emoji.name,
+                count: r.count
+              })) : []
+            })
+          })
+        } catch (channelError) {
+          logger.error(`Error fetching messages from channel ${channel.name}:`, channelError)
+        }
+      }
+
+      // Sort by timestamp (oldest first for chronological order)
+      allMessages.sort((a, b) => a.timestamp - b.timestamp)
+
+      // Limit to requested amount
+      const limitedMessages = allMessages.slice(0, limit)
+
+      if (limitedMessages.length === 0) {
+        await interaction.editReply(`No messages found in **${guild.name}**.`)
+        return
+      }
+
+      await interaction.editReply(`Generating ${format.toUpperCase()} file with ${limitedMessages.length} messages...`)
+
+      // Generate the file based on format
+      let fileContent = ''
+      let fileName = `${guild.name.replace(/[^a-z0-9]/gi, '_')}_export_${Date.now()}.${format}`
+      
+      if (format === 'txt') {
+        fileContent = this.generateTxtExport(guild, limitedMessages)
+      } else if (format === 'json') {
+        fileContent = this.generateJsonExport(guild, limitedMessages)
+        fileName = fileName.replace('.json', '.json')
+      } else if (format === 'markdown' || format === 'md') {
+        fileContent = this.generateMarkdownExport(guild, limitedMessages)
+        fileName = fileName.replace(`.${format}`, '.md')
+      } else {
+        await interaction.editReply(`Unsupported format: **${format}**. Please use txt, json, or markdown.`)
+        return
+      }
+
+      // Create attachment and send
+      const buffer = Buffer.from(fileContent, 'utf-8')
+      const attachment = new AttachmentBuilder(buffer, { name: fileName })
+
+      await interaction.editReply({
+        content: `**Export Complete!**\n\nServer: **${guild.name}**\nMessages: **${limitedMessages.length}**\nChannels: **${textChannels.size}**\nFormat: **${format.toUpperCase()}**`,
+        files: [attachment]
+      })
+
+      logger.cmd(`/viewall export executed by ${interaction.user.tag} for server: ${guild.name}, format: ${format}, messages: ${limitedMessages.length}`)
+
+    } catch (error) {
+      logger.error('Error exporting server messages:', error)
+      
+      const errorContent = 'An error occurred while exporting messages from this server.'
+      
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: errorContent })
+      } else {
+        await interaction.reply({ content: errorContent, ephemeral: true })
+      }
+    }
+  },
+
+  /**
+   * Generate TXT format export
+   */
+  generateTxtExport(guild, messages) {
+    let content = `===========================================\n`
+    content += `Chat Export from: ${guild.name}\n`
+    content += `Export Date: ${new Date().toISOString()}\n`
+    content += `Total Messages: ${messages.length}\n`
+    content += `===========================================\n\n`
+
+    for (const msg of messages) {
+      const date = new Date(msg.timestamp).toLocaleString()
+      content += `[${date}] #${msg.channel} | ${msg.author}${msg.authorBot ? ' [BOT]' : ''}\n`
+      
+      if (msg.content) {
+        content += `${msg.content}\n`
+      }
+      
+      if (msg.attachments.length > 0) {
+        content += `📎 Attachments: ${msg.attachments.map(a => a.name).join(', ')}\n`
+      }
+      
+      if (msg.reactions.length > 0) {
+        content += `👍 Reactions: ${msg.reactions.map(r => `${r.emoji} (${r.count})`).join(', ')}\n`
+      }
+      
+      content += `\n`
+    }
+
+    return content
+  },
+
+  /**
+   * Generate JSON format export
+   */
+  generateJsonExport(guild, messages) {
+    const exportData = {
+      server: {
+        name: guild.name,
+        id: guild.id,
+        memberCount: guild.memberCount
+      },
+      exportDate: new Date().toISOString(),
+      messageCount: messages.length,
+      messages: messages.map(msg => ({
+        id: msg.id,
+        timestamp: msg.createdAt,
+        channel: {
+          name: msg.channel,
+          id: msg.channelId
+        },
+        author: {
+          username: msg.author,
+          id: msg.authorId,
+          bot: msg.authorBot
+        },
+        content: msg.content,
+        attachments: msg.attachments,
+        embeds: msg.embeds,
+        reactions: msg.reactions
+      }))
+    }
+
+    return JSON.stringify(exportData, null, 2)
+  },
+
+  /**
+   * Generate Markdown format export
+   */
+  generateMarkdownExport(guild, messages) {
+    let content = `# Chat Export: ${guild.name}\n\n`
+    content += `**Export Date:** ${new Date().toISOString()}\n`
+    content += `**Total Messages:** ${messages.length}\n`
+    content += `**Server ID:** ${guild.id}\n\n`
+    content += `---\n\n`
+
+    let currentChannel = null
+
+    for (const msg of messages) {
+      // Add channel header when switching channels
+      if (currentChannel !== msg.channel) {
+        currentChannel = msg.channel
+        content += `\n## #${msg.channel}\n\n`
+      }
+
+      const date = new Date(msg.timestamp).toLocaleString()
+      const botBadge = msg.authorBot ? ' `[BOT]`' : ''
+      
+      content += `### ${msg.author}${botBadge}\n`
+      content += `*${date}*\n\n`
+      
+      if (msg.content) {
+        content += `${msg.content}\n\n`
+      }
+      
+      if (msg.attachments.length > 0) {
+        content += `**Attachments:**\n`
+        for (const att of msg.attachments) {
+          content += `- [${att.name}](${att.url}) *(${Math.round(att.size / 1024)}KB)*\n`
+        }
+        content += `\n`
+      }
+
+      if (msg.embeds.length > 0) {
+        content += `**Embeds:**\n`
+        for (const emb of msg.embeds) {
+          if (emb.title) content += `- **${emb.title}**\n`
+          if (emb.description) content += `  ${emb.description.substring(0, 100)}...\n`
+        }
+        content += `\n`
+      }
+      
+      if (msg.reactions.length > 0) {
+        content += `**Reactions:** ${msg.reactions.map(r => `${r.emoji} (${r.count})`).join(', ')}\n\n`
+      }
+      
+      content += `---\n\n`
+    }
+
+    return content
   }
 }

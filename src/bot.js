@@ -605,6 +605,35 @@ client.on('interactionCreate', async (interaction) => {
           modal.addComponents(firstRow, secondRow);
 
           return interaction.showModal(modal);
+        } else if (selectedAction === 'export') {
+          const modal = new ModalBuilder()
+            .setCustomId('viewall_export_modal')
+            .setTitle('Export Chat History');
+
+          const formatInput = new TextInputBuilder()
+            .setCustomId('format')
+            .setLabel('Export format (txt, json, or markdown)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('txt')
+            .setRequired(false)
+            .setValue('txt')
+            .setMaxLength(10);
+
+          const limitInput = new TextInputBuilder()
+            .setCustomId('limit')
+            .setLabel('Number of messages to export (1-1000)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('1000')
+            .setRequired(false)
+            .setValue('1000')
+            .setMaxLength(4);
+
+          const firstRow = new ActionRowBuilder().addComponents(formatInput);
+          const secondRow = new ActionRowBuilder().addComponents(limitInput);
+
+          modal.addComponents(firstRow, secondRow);
+
+          return interaction.showModal(modal);
         } else {
           // For 'view' action, show limit input modal
           const modal = new ModalBuilder()
@@ -660,6 +689,8 @@ client.on('interactionCreate', async (interaction) => {
           await viewallCommand.searchServerMessages(interaction, selectedGuildId, keyword, parseInt(limit) || 50);
         } else if (action === 'summary') {
           await viewallCommand.summarizeChannel(interaction, selectedGuildId, channel, parseInt(limit) || 100);
+        } else if (action === 'export') {
+          await viewallCommand.exportServerMessages(interaction, selectedGuildId, channel, parseInt(limit) || 1000);
         } else {
           await viewallCommand.displayServerMessages(interaction, selectedGuildId, parseInt(limit) || 50);
         }
@@ -768,6 +799,61 @@ client.on('interactionCreate', async (interaction) => {
       } catch (e) {
         logger.error('ViewAll summary modal error', e);
         return interaction.reply({ content: '❌ Error processing summary request.', ephemeral: true });
+      }
+    }
+
+    // ViewAll Export Modal
+    if (customId === 'viewall_export_modal') {
+      try {
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        const format = (interaction.fields.getTextInputValue('format') || 'txt').toLowerCase();
+        const limitStr = interaction.fields.getTextInputValue('limit') || '1000';
+        const limit = Math.min(Math.max(parseInt(limitStr) || 1000, 1), 1000);
+
+        // Validate format
+        if (!['txt', 'json', 'markdown', 'md'].includes(format)) {
+          return interaction.reply({
+            content: '❌ Invalid format. Please use txt, json, or markdown.',
+            ephemeral: true
+          });
+        }
+
+        // Show server selection
+        const guilds = interaction.client.guilds.cache;
+        const guildOptions = Array.from(guilds.values()).map(guild => ({
+          label: guild.name,
+          description: `${guild.memberCount} members`,
+          value: guild.id
+        }));
+
+        if (guildOptions.length > 25) {
+          guildOptions.length = 25;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`viewall_server_select:export:${limit}::${format}`)
+          .setPlaceholder('Select a server to export')
+          .addOptions(guildOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: `**Select a server to export:**\nFormat: **${format.toUpperCase()}**\nMessages: **${limit}**`,
+          components: [row],
+          ephemeral: true
+        });
+
+      } catch (e) {
+        logger.error('ViewAll export modal error', e);
+        return interaction.reply({ content: '❌ Error processing export request.', ephemeral: true });
       }
     }
 
