@@ -186,7 +186,7 @@ export default {
         await this.summarizeChannel(interaction, serverOption, channelOption, limit)
       } else if (action === 'export') {
         const format = interaction.options.getString('format') || 'txt'
-        await this.exportServerMessages(interaction, serverOption, format, limit)
+        await this.exportServerMessages(interaction, serverOption, channelOption, format, limit)
       } else {
         await this.displayServerMessages(interaction, serverOption, limit, keyword)
       }
@@ -565,9 +565,9 @@ export default {
   },
 
   /**
-   * Export server messages to a file
+   * Export messages from a specific channel to a file
    */
-  async exportServerMessages(interaction, guildId, format = 'txt', limit = 1000) {
+  async exportServerMessages(interaction, guildId, channelIdentifier, format = 'txt', limit = 1000) {
     try {
       const guild = interaction.client.guilds.cache.get(guildId)
       
@@ -584,29 +584,42 @@ export default {
         await interaction.deferReply({ ephemeral: true })
       }
 
-      await interaction.editReply(`Collecting messages from **${guild.name}**...`)
+      await interaction.editReply(`Finding channel in **${guild.name}**...`)
 
-      // Get all text channels in the guild
-      const textChannels = guild.channels.cache.filter(
-        channel => channel.isTextBased() && !channel.isThread()
-      )
+      // Find the channel by ID or name
+      let targetChannel = guild.channels.cache.get(channelIdentifier)
+      
+      if (!targetChannel) {
+        // Try to find by name
+        targetChannel = guild.channels.cache.find(
+          ch => ch.name.toLowerCase() === channelIdentifier.toLowerCase() && ch.isTextBased()
+        )
+      }
 
-      if (textChannels.size === 0) {
-        await interaction.editReply(`No accessible text channels found in **${guild.name}**.`)
+      if (!targetChannel || !targetChannel.isTextBased()) {
+        await interaction.editReply(`Channel "${channelIdentifier}" not found or is not a text channel in **${guild.name}**.`)
         return
       }
 
-      // Collect all messages from all channels
+      await interaction.editReply(`Fetching messages from **#${targetChannel.name}** in **${guild.name}**...`)
+
+      // Fetch messages from the channel - handle pagination for large limits
       const allMessages = []
-      let channelCount = 0
+      let lastMessageId = null
+      const fetchLimit = Math.min(limit, 1000) // Cap at 1000
       
-      for (const [channelId, channel] of textChannels) {
+      while (allMessages.length < fetchLimit) {
+        const fetchAmount = Math.min(100, fetchLimit - allMessages.length) // Discord max is 100 per request
+        
         try {
-          channelCount++
-          await interaction.editReply(`Fetching messages... (${channelCount}/${textChannels.size} channels)`)
+          const options = { limit: fetchAmount }
+          if (lastMessageId) {
+            options.before = lastMessageId
+          }
           
-          // Fetch up to 100 messages per channel (Discord API limit per request)
-          const messages = await channel.messages.fetch({ limit: Math.min(limit, 100) })
+          const messages = await targetChannel.messages.fetch(options)
+          
+          if (messages.size === 0) break // No more messages
           
           messages.forEach(msg => {
             allMessages.push({
@@ -615,8 +628,8 @@ export default {
               author: msg.author.tag,
               authorId: msg.author.id,
               authorBot: msg.author.bot,
-              channel: channel.name,
-              channelId: channel.id,
+              channel: targetChannel.name,
+              channelId: targetChannel.id,
               timestamp: msg.createdTimestamp,
               createdAt: msg.createdAt.toISOString(),
               attachments: Array.from(msg.attachments.values()).map(att => ({
@@ -635,36 +648,41 @@ export default {
               })) : []
             })
           })
-        } catch (channelError) {
-          logger.error(`Error fetching messages from channel ${channel.name}:`, channelError)
+          
+          lastMessageId = messages.last().id
+          
+          await interaction.editReply(`Fetching messages... (${allMessages.length}/${fetchLimit})`)
+        } catch (fetchError) {
+          logger.error(`Error fetching messages from channel ${targetChannel.name}:`, fetchError)
+          break
         }
+      }
+
+      if (allMessages.length === 0) {
+        await interaction.editReply(`No messages found in **#${targetChannel.name}**.`)
+        return
       }
 
       // Sort by timestamp (oldest first for chronological order)
       allMessages.sort((a, b) => a.timestamp - b.timestamp)
 
-      // Limit to requested amount
-      const limitedMessages = allMessages.slice(0, limit)
-
-      if (limitedMessages.length === 0) {
-        await interaction.editReply(`No messages found in **${guild.name}**.`)
-        return
-      }
+      const limitedMessages = allMessages
 
       await interaction.editReply(`Generating ${format.toUpperCase()} file with ${limitedMessages.length} messages...`)
 
       // Generate the file based on format
       let fileContent = ''
-      let fileName = `${guild.name.replace(/[^a-z0-9]/gi, '_')}_export_${Date.now()}.${format}`
+      const channelName = targetChannel.name.replace(/[^a-z0-9]/gi, '_')
+      const guildName = guild.name.replace(/[^a-z0-9]/gi, '_')
+      let fileName = `${guildName}_${channelName}_${Date.now()}.${format}`
       
       if (format === 'txt') {
-        fileContent = this.generateTxtExport(guild, limitedMessages)
+        fileContent = this.generateTxtExport(guild, targetChannel, limitedMessages)
       } else if (format === 'json') {
-        fileContent = this.generateJsonExport(guild, limitedMessages)
-        fileName = fileName.replace('.json', '.json')
+        fileContent = this.generateJsonExport(guild, targetChannel, limitedMessages)
       } else if (format === 'markdown' || format === 'md') {
-        fileContent = this.generateMarkdownExport(guild, limitedMessages)
-        fileName = fileName.replace(`.${format}`, '.md')
+        fileContent = this.generateMarkdownExport(guild, targetChannel, limitedMessages)
+        fileName = `${guildName}_${channelName}_${Date.now()}.md`
       } else {
         await interaction.editReply(`Unsupported format: **${format}**. Please use txt, json, or markdown.`)
         return
@@ -675,11 +693,11 @@ export default {
       const attachment = new AttachmentBuilder(buffer, { name: fileName })
 
       await interaction.editReply({
-        content: `**Export Complete!**\n\nServer: **${guild.name}**\nMessages: **${limitedMessages.length}**\nChannels: **${textChannels.size}**\nFormat: **${format.toUpperCase()}**`,
+        content: `**Export Complete!**\n\nServer: **${guild.name}**\nChannel: **#${targetChannel.name}**\nMessages: **${limitedMessages.length}** (most recent)\nFormat: **${format.toUpperCase()}**`,
         files: [attachment]
       })
 
-      logger.cmd(`/viewall export executed by ${interaction.user.tag} for server: ${guild.name}, format: ${format}, messages: ${limitedMessages.length}`)
+      logger.cmd(`/viewall export executed by ${interaction.user.tag} for server: ${guild.name}, channel: ${targetChannel.name}, format: ${format}, messages: ${limitedMessages.length}`)
 
     } catch (error) {
       logger.error('Error exporting server messages:', error)
@@ -697,16 +715,16 @@ export default {
   /**
    * Generate TXT format export
    */
-  generateTxtExport(guild, messages) {
+  generateTxtExport(guild, channel, messages) {
     let content = `===========================================\n`
-    content += `Chat Export from: ${guild.name}\n`
+    content += `Chat Export from: ${guild.name} - #${channel.name}\n`
     content += `Export Date: ${new Date().toISOString()}\n`
     content += `Total Messages: ${messages.length}\n`
     content += `===========================================\n\n`
 
     for (const msg of messages) {
       const date = new Date(msg.timestamp).toLocaleString()
-      content += `[${date}] #${msg.channel} | ${msg.author}${msg.authorBot ? ' [BOT]' : ''}\n`
+      content += `[${date}] ${msg.author}${msg.authorBot ? ' [BOT]' : ''}\n`
       
       if (msg.content) {
         content += `${msg.content}\n`
@@ -729,22 +747,22 @@ export default {
   /**
    * Generate JSON format export
    */
-  generateJsonExport(guild, messages) {
+  generateJsonExport(guild, channel, messages) {
     const exportData = {
       server: {
         name: guild.name,
         id: guild.id,
         memberCount: guild.memberCount
       },
+      channel: {
+        name: channel.name,
+        id: channel.id
+      },
       exportDate: new Date().toISOString(),
       messageCount: messages.length,
       messages: messages.map(msg => ({
         id: msg.id,
         timestamp: msg.createdAt,
-        channel: {
-          name: msg.channel,
-          id: msg.channelId
-        },
         author: {
           username: msg.author,
           id: msg.authorId,
@@ -763,22 +781,15 @@ export default {
   /**
    * Generate Markdown format export
    */
-  generateMarkdownExport(guild, messages) {
-    let content = `# Chat Export: ${guild.name}\n\n`
+  generateMarkdownExport(guild, channel, messages) {
+    let content = `# Chat Export: ${guild.name} - #${channel.name}\n\n`
     content += `**Export Date:** ${new Date().toISOString()}\n`
     content += `**Total Messages:** ${messages.length}\n`
-    content += `**Server ID:** ${guild.id}\n\n`
+    content += `**Server:** ${guild.name} (${guild.id})\n`
+    content += `**Channel:** #${channel.name} (${channel.id})\n\n`
     content += `---\n\n`
 
-    let currentChannel = null
-
     for (const msg of messages) {
-      // Add channel header when switching channels
-      if (currentChannel !== msg.channel) {
-        currentChannel = msg.channel
-        content += `\n## #${msg.channel}\n\n`
-      }
-
       const date = new Date(msg.timestamp).toLocaleString()
       const botBadge = msg.authorBot ? ' `[BOT]`' : ''
       

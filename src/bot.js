@@ -610,6 +610,14 @@ client.on('interactionCreate', async (interaction) => {
             .setCustomId('viewall_export_modal')
             .setTitle('Export Chat History');
 
+          const channelInput = new TextInputBuilder()
+            .setCustomId('channel')
+            .setLabel('Channel ID or name')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., general, 123456789')
+            .setRequired(true)
+            .setMaxLength(100);
+
           const formatInput = new TextInputBuilder()
             .setCustomId('format')
             .setLabel('Export format (txt, json, or markdown)')
@@ -628,10 +636,11 @@ client.on('interactionCreate', async (interaction) => {
             .setValue('1000')
             .setMaxLength(4);
 
-          const firstRow = new ActionRowBuilder().addComponents(formatInput);
-          const secondRow = new ActionRowBuilder().addComponents(limitInput);
+          const firstRow = new ActionRowBuilder().addComponents(channelInput);
+          const secondRow = new ActionRowBuilder().addComponents(formatInput);
+          const thirdRow = new ActionRowBuilder().addComponents(limitInput);
 
-          modal.addComponents(firstRow, secondRow);
+          modal.addComponents(firstRow, secondRow, thirdRow);
 
           return interaction.showModal(modal);
         } else {
@@ -665,7 +674,11 @@ client.on('interactionCreate', async (interaction) => {
     // ViewAll Server Select
     if (customId.startsWith('viewall_server_select:')) {
       const selectedGuildId = interaction.values[0];
-      const [_, action, limit, keyword, channel] = customId.split(':');
+      const parts = customId.split(':');
+      const action = parts[1];
+      const limit = parts[2];
+      const param1 = parts[3]; // keyword for search, channel for summary/export
+      const param2 = parts[4]; // format for export, empty for others
       
       try {
         // Verify user is bot owner
@@ -686,11 +699,11 @@ client.on('interactionCreate', async (interaction) => {
 
         // Execute the appropriate action
         if (action === 'search') {
-          await viewallCommand.searchServerMessages(interaction, selectedGuildId, keyword, parseInt(limit) || 50);
+          await viewallCommand.searchServerMessages(interaction, selectedGuildId, param1, parseInt(limit) || 50);
         } else if (action === 'summary') {
-          await viewallCommand.summarizeChannel(interaction, selectedGuildId, channel, parseInt(limit) || 100);
+          await viewallCommand.summarizeChannel(interaction, selectedGuildId, param1, parseInt(limit) || 100);
         } else if (action === 'export') {
-          await viewallCommand.exportServerMessages(interaction, selectedGuildId, channel, parseInt(limit) || 1000);
+          await viewallCommand.exportServerMessages(interaction, selectedGuildId, param1, param2 || 'txt', parseInt(limit) || 1000);
         } else {
           await viewallCommand.displayServerMessages(interaction, selectedGuildId, parseInt(limit) || 50);
         }
@@ -814,6 +827,7 @@ client.on('interactionCreate', async (interaction) => {
           });
         }
 
+        const channel = interaction.fields.getTextInputValue('channel');
         const format = (interaction.fields.getTextInputValue('format') || 'txt').toLowerCase();
         const limitStr = interaction.fields.getTextInputValue('limit') || '1000';
         const limit = Math.min(Math.max(parseInt(limitStr) || 1000, 1), 1000);
@@ -839,14 +853,14 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         const selectMenu = new StringSelectMenuBuilder()
-          .setCustomId(`viewall_server_select:export:${limit}::${format}`)
+          .setCustomId(`viewall_server_select:export:${limit}:${channel}:${format}`)
           .setPlaceholder('Select a server to export')
           .addOptions(guildOptions);
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
 
         await interaction.reply({
-          content: `**Select a server to export:**\nFormat: **${format.toUpperCase()}**\nMessages: **${limit}**`,
+          content: `**Select a server to export:**\nChannel: **${channel}**\nFormat: **${format.toUpperCase()}**\nMessages: **${limit}**`,
           components: [row],
           ephemeral: true
         });
