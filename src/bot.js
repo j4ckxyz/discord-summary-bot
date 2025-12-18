@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder } from 'discord.js';
 import logger from './utils/logger.js';
 import summariseCommand from './commands/summarise.js';
 import catchupCommand from './commands/catchup.js';
@@ -533,9 +533,110 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
+    // ViewAll Action Select
+    if (customId === 'viewall_action_select') {
+      const selectedAction = interaction.values[0];
+      
+      try {
+        // Verify user is bot owner
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        // For search and summary actions, show a modal to get input
+        if (selectedAction === 'search') {
+          const modal = new ModalBuilder()
+            .setCustomId('viewall_search_modal')
+            .setTitle('Search Messages');
+
+          const keywordInput = new TextInputBuilder()
+            .setCustomId('keyword')
+            .setLabel('Keyword to search for')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., docker, deployment, bug')
+            .setRequired(true)
+            .setMaxLength(100);
+
+          const limitInput = new TextInputBuilder()
+            .setCustomId('limit')
+            .setLabel('Maximum results (1-1000)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('50')
+            .setRequired(false)
+            .setValue('50')
+            .setMaxLength(4);
+
+          const firstRow = new ActionRowBuilder().addComponents(keywordInput);
+          const secondRow = new ActionRowBuilder().addComponents(limitInput);
+
+          modal.addComponents(firstRow, secondRow);
+
+          return interaction.showModal(modal);
+        } else if (selectedAction === 'summary') {
+          const modal = new ModalBuilder()
+            .setCustomId('viewall_summary_modal')
+            .setTitle('Summarize Channel');
+
+          const channelInput = new TextInputBuilder()
+            .setCustomId('channel')
+            .setLabel('Channel ID or name')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., general, 123456789')
+            .setRequired(true)
+            .setMaxLength(100);
+
+          const limitInput = new TextInputBuilder()
+            .setCustomId('limit')
+            .setLabel('Number of messages to analyze (1-1000)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('100')
+            .setRequired(false)
+            .setValue('100')
+            .setMaxLength(4);
+
+          const firstRow = new ActionRowBuilder().addComponents(channelInput);
+          const secondRow = new ActionRowBuilder().addComponents(limitInput);
+
+          modal.addComponents(firstRow, secondRow);
+
+          return interaction.showModal(modal);
+        } else {
+          // For 'view' action, show limit input modal
+          const modal = new ModalBuilder()
+            .setCustomId('viewall_view_modal')
+            .setTitle('View Recent Messages');
+
+          const limitInput = new TextInputBuilder()
+            .setCustomId('limit')
+            .setLabel('Number of messages to retrieve (1-1000)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('50')
+            .setRequired(false)
+            .setValue('50')
+            .setMaxLength(4);
+
+          const firstRow = new ActionRowBuilder().addComponents(limitInput);
+
+          modal.addComponents(firstRow);
+
+          return interaction.showModal(modal);
+        }
+
+      } catch (e) {
+        logger.error('ViewAll action select error', e);
+        return interaction.reply({ content: '❌ Error processing action selection.', ephemeral: true });
+      }
+    }
+
     // ViewAll Server Select
-    if (customId === 'viewall_server_select') {
+    if (customId.startsWith('viewall_server_select:')) {
       const selectedGuildId = interaction.values[0];
+      const [_, action, limit, keyword, channel] = customId.split(':');
       
       try {
         // Verify user is bot owner
@@ -550,18 +651,178 @@ client.on('interactionCreate', async (interaction) => {
 
         // Update the message to show loading
         await interaction.update({
-          content: 'Fetching messages...',
+          content: 'Processing...',
           components: []
         });
 
-        // Display messages from selected server
-        await viewallCommand.displayServerMessages(interaction, selectedGuildId, 50);
+        // Execute the appropriate action
+        if (action === 'search') {
+          await viewallCommand.searchServerMessages(interaction, selectedGuildId, keyword, parseInt(limit) || 50);
+        } else if (action === 'summary') {
+          await viewallCommand.summarizeChannel(interaction, selectedGuildId, channel, parseInt(limit) || 100);
+        } else {
+          await viewallCommand.displayServerMessages(interaction, selectedGuildId, parseInt(limit) || 50);
+        }
 
       } catch (e) {
         logger.error('ViewAll select error', e);
         return interaction.reply({ content: '❌ Error fetching server messages.', ephemeral: true });
       }
     }
+
+    return;
+  }
+
+  // Handle Modal Submissions
+  if (interaction.isModalSubmit()) {
+    const customId = interaction.customId;
+
+    // ViewAll Search Modal
+    if (customId === 'viewall_search_modal') {
+      try {
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        const keyword = interaction.fields.getTextInputValue('keyword');
+        const limitStr = interaction.fields.getTextInputValue('limit') || '50';
+        const limit = Math.min(Math.max(parseInt(limitStr) || 50, 1), 1000);
+
+        // Show server selection
+        const guilds = interaction.client.guilds.cache;
+        const guildOptions = Array.from(guilds.values()).map(guild => ({
+          label: guild.name,
+          description: `${guild.memberCount} members`,
+          value: guild.id
+        }));
+
+        if (guildOptions.length > 25) {
+          guildOptions.length = 25;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`viewall_server_select:search:${limit}:${keyword}:`)
+          .setPlaceholder('Select a server to search')
+          .addOptions(guildOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: `**Select a server to search:**\nSearching for: **${keyword}**\nLimit: **${limit}** results`,
+          components: [row],
+          ephemeral: true
+        });
+
+      } catch (e) {
+        logger.error('ViewAll search modal error', e);
+        return interaction.reply({ content: '❌ Error processing search.', ephemeral: true });
+      }
+    }
+
+    // ViewAll Summary Modal
+    if (customId === 'viewall_summary_modal') {
+      try {
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        const channel = interaction.fields.getTextInputValue('channel');
+        const limitStr = interaction.fields.getTextInputValue('limit') || '100';
+        const limit = Math.min(Math.max(parseInt(limitStr) || 100, 1), 1000);
+
+        // Show server selection
+        const guilds = interaction.client.guilds.cache;
+        const guildOptions = Array.from(guilds.values()).map(guild => ({
+          label: guild.name,
+          description: `${guild.memberCount} members`,
+          value: guild.id
+        }));
+
+        if (guildOptions.length > 25) {
+          guildOptions.length = 25;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`viewall_server_select:summary:${limit}::${channel}`)
+          .setPlaceholder('Select a server')
+          .addOptions(guildOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: `**Select a server:**\nSummarizing channel: **${channel}**\nAnalyzing: **${limit}** messages`,
+          components: [row],
+          ephemeral: true
+        });
+
+      } catch (e) {
+        logger.error('ViewAll summary modal error', e);
+        return interaction.reply({ content: '❌ Error processing summary request.', ephemeral: true });
+      }
+    }
+
+    // ViewAll View Modal
+    if (customId === 'viewall_view_modal') {
+      try {
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+        
+        if (interaction.user.id !== botOwnerId) {
+          return interaction.reply({
+            content: 'This command is only available to the bot owner.',
+            ephemeral: true
+          });
+        }
+
+        const limitStr = interaction.fields.getTextInputValue('limit') || '50';
+        const limit = Math.min(Math.max(parseInt(limitStr) || 50, 1), 1000);
+
+        // Show server selection
+        const guilds = interaction.client.guilds.cache;
+        const guildOptions = Array.from(guilds.values()).map(guild => ({
+          label: guild.name,
+          description: `${guild.memberCount} members`,
+          value: guild.id
+        }));
+
+        if (guildOptions.length > 25) {
+          guildOptions.length = 25;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`viewall_server_select:view:${limit}::`)
+          .setPlaceholder('Select a server to view')
+          .addOptions(guildOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: `**Select a server to view:**\nShowing: **${limit}** most recent messages`,
+          components: [row],
+          ephemeral: true
+        });
+
+      } catch (e) {
+        logger.error('ViewAll view modal error', e);
+        return interaction.reply({ content: '❌ Error processing view request.', ephemeral: true });
+      }
+    }
+
+    return;
+  }
+
+  // Continue with other interaction types
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    const customId = interaction.customId;
 
     // Imposter Role Reveal
     if (customId.startsWith('imposter_reveal_')) {

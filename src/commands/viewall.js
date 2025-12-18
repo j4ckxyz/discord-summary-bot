@@ -73,12 +73,48 @@ export default {
         return
       }
 
-      const action = interaction.options.getString('action') || 'view'
+      const action = interaction.options.getString('action')
       const serverOption = interaction.options.getString('server')
       const keyword = interaction.options.getString('keyword')
       const channelOption = interaction.options.getString('channel')
       const limit = interaction.options.getInteger('limit') || 50
       
+      // If NO options provided at all, show action selection menu
+      if (!action && !serverOption && !keyword && !channelOption) {
+        const actionSelectMenu = new StringSelectMenuBuilder()
+          .setCustomId('viewall_action_select')
+          .setPlaceholder('Choose what you want to do')
+          .addOptions([
+            {
+              label: 'View Recent Messages',
+              description: 'Browse the most recent messages from a server',
+              value: 'view',
+              emoji: '👀'
+            },
+            {
+              label: 'Search for Keyword',
+              description: 'Search messages containing specific keywords',
+              value: 'search',
+              emoji: '🔍'
+            },
+            {
+              label: 'Summarize Channel',
+              description: 'Get an AI summary of a specific channel',
+              value: 'summary',
+              emoji: '📝'
+            }
+          ])
+
+        const row = new ActionRowBuilder().addComponents(actionSelectMenu)
+
+        await interaction.reply({
+          content: `**ViewAll - Bot Owner Tools**\n\nThe bot is currently in **${guilds.size}** server(s).\n\nSelect an action to get started:`,
+          components: [row],
+          ephemeral: true
+        })
+        return
+      }
+
       // Validate action-specific requirements
       if (action === 'search' && !keyword) {
         await interaction.reply({
@@ -110,14 +146,23 @@ export default {
         }
 
         const selectMenu = new StringSelectMenuBuilder()
-          .setCustomId('viewall_server_select')
-          .setPlaceholder('Select a server to view messages from')
+          .setCustomId(`viewall_server_select:${action}:${limit}:${keyword || ''}:${channelOption || ''}`)
+          .setPlaceholder('Select a server')
           .addOptions(guildOptions)
 
         const row = new ActionRowBuilder().addComponents(selectMenu)
 
+        let actionDescription = ''
+        if (action === 'view') {
+          actionDescription = `Viewing **${limit}** most recent messages`
+        } else if (action === 'search') {
+          actionDescription = `Searching for keyword: **${keyword}** (limit: ${limit})`
+        } else if (action === 'summary') {
+          actionDescription = `Summarizing channel: **${channelOption}** (${limit} messages)`
+        }
+
         await interaction.reply({
-          content: `**Select a server to view messages from:**\nThe bot is in ${guilds.size} server(s).\n\nAction: **${action}**${keyword ? `\nKeyword: **${keyword}**` : ''}${channelOption ? `\nChannel: **${channelOption}**` : ''}\nLimit: **${limit}**`,
+          content: `**Select a server:**\n${actionDescription}\n\nThe bot is in ${guilds.size} server(s).`,
           components: [row],
           ephemeral: true
         })
