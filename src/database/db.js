@@ -86,13 +86,17 @@ const migrateDb = () => {
         console.log(`Adding column ${col} to beer_profiles table...`);
         try {
           let colDef = 'TEXT';
-          if (col === 'tolerance_beers' || col === 'tolerance_confidence') colDef = 'REAL';
-          if (col === 'activity_days' || col === 'tolerance_last_updated') colDef = 'INTEGER';
+          if (col === 'tolerance_beers' || col === 'tolerance_confidence') {
+            colDef = 'REAL';
+          }
+          if (col === 'activity_days' || col === 'tolerance_last_updated') {
+            colDef = 'INTEGER';
+          }
 
-          const defaultValue = col === 'tolerance_confidence' ? 'DEFAULT 0.5' :
-                            col === 'activity_days' ? 'DEFAULT 0' : '';
+          const defaultClause = (col === 'tolerance_confidence') ? 'DEFAULT 0.5' :
+                             (col === 'activity_days') ? 'DEFAULT 0' : '';
 
-          db.exec(`ALTER TABLE beer_profiles ADD COLUMN ${col} ${colDef} ${defaultValue}`);
+          db.exec(`ALTER TABLE beer_profiles ADD COLUMN ${col} ${colDef} ${defaultClause}`);
           console.log(`Column ${col} added successfully`);
         } catch (error) {
           console.warn(`Could not add column ${col}:`, error.message);
