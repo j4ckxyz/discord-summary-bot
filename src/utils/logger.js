@@ -18,7 +18,8 @@ class Logger {
       CACHE: 'CACHE',
       CMD: 'CMD',
       DB: 'DB',
-      QUEUE: 'QUEUE'
+      QUEUE: 'QUEUE',
+      BEER: 'BEER'
     };
 
     // Check if debug mode is enabled
@@ -109,15 +110,22 @@ class Logger {
   }
 
   /**
-   * Request queue logs
-   */
+    * Request queue logs
+    */
   queue(message, level = 'INFO') {
     this._log(level, this.categories.QUEUE, message);
   }
 
   /**
-   * Log a separator line for visual clarity
-   */
+    * Beer tracker logs
+    */
+  beer(message, level = 'INFO') {
+    this._log(level, this.categories.BEER, message);
+  }
+
+  /**
+    * Log a separator line for visual clarity
+    */
   separator() {
     console.log('─'.repeat(60));
   }

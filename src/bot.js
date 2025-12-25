@@ -17,12 +17,14 @@ import funCommand from './commands/fun.js';
 import freesCommand from './commands/frees.js';
 import searchCommand from './commands/search.js';
 import imposterCommand from './commands/imposter.js';
+import beerCommand from './commands/beer.js';
 import imposterService from './services/imposter.js';
 import SchedulerService from './services/scheduler.js';
 import rateLimitService from './services/ratelimit.js';
 import summariserService from './services/summariser.js';
 import messageCacheService from './services/messageCache.js';
 import requestQueueService from './services/requestQueue.js';
+import beerToleranceService from './services/beer.js';
 import { config } from './utils/config.js';
 
 // Validate environment variables
@@ -65,7 +67,8 @@ const commands = [
   funCommand,
   freesCommand,
   searchCommand,
-  imposterCommand
+  imposterCommand,
+  beerCommand
 ];
 
 // Register slash commands
@@ -102,7 +105,7 @@ async function handleTextCommand(message) {
   const isMention = message.mentions.has(client.user);
 
   // Check for prefix commands
-  const prefixCommands = ['!summary', '!catchup', '!topic', '!explain'];
+  const prefixCommands = ['!summary', '!catchup', '!topic', '!explain', '!beer'];
   const matchedPrefix = prefixCommands.find(p => content.toLowerCase().startsWith(p));
 
   if (!isMention && !matchedPrefix) return;
@@ -168,6 +171,9 @@ async function handleTextCommand(message) {
     if (commandName === 'search') {
       return searchCommand.executeText(message, args);
     }
+    if (commandName === 'beer') {
+      return beerCommand.executeText(message, args);
+    }
 
     // Check for help command
     if (command === 'help' || (args.length > 0 && args[0].toLowerCase() === 'help')) {
@@ -189,6 +195,13 @@ async function handleTextCommand(message) {
 **Explain Commands:**
 \`!explain <topic>\` or \`/explain\` - Get help understanding a topic
 \`!explain the migration\` - Explains what "the migration" is about
+
+**Beer Tracker:**
+\`!beer setup age:25 height:180 weight:75 tolerance:3\` - Set up your profile
+\`!beer tolerance\` - View/update your alcohol tolerance (adapts daily)
+\`!beer log\` or \`!beer log 3\` - Log 1 or 3 beers
+\`!beer status\` - View your drinking stats (private)
+\`!beer leaderboard\` - View the weekly leaderboard
 
 **Rate Limits:**
 • ${config.maxUsesPerWindow} requests per ${config.cooldownMinutes} minutes per channel`;
@@ -433,8 +446,11 @@ client.once('ready', async () => {
   // Start cache maintenance (cleanup old messages daily)
   messageCacheService.startMaintenanceSchedule();
 
+  // Start beer tolerance update service (daily updates)
+  beerToleranceService.start();
+
   logger.separator();
-  logger.bot('Bot is ready! Commands: /summary, /remind, /todo, /event, /poll, /config, /topic, /catchup, /viewall');
+  logger.bot('Bot is ready! Commands: /summary, /remind, /todo, /event, /poll, /config, /topic, /catchup, /viewall, /beer');
   logger.separator();
 });
 

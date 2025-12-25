@@ -68,6 +68,38 @@ const migrateDb = () => {
       console.log('Migration complete!');
     }
   }
+
+  // Migrate beer_profiles table to add new tolerance columns
+  const beerTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='beer_profiles'").all();
+  if (beerTables.length > 0) {
+    const newColumns = [
+      'tolerance_description',
+      'tolerance_beers',
+      'tolerance_confidence',
+      'tolerance_last_updated',
+      'activity_days',
+      'last_activity_date'
+    ];
+
+    for (const col of newColumns) {
+      if (!columnExists('beer_profiles', col)) {
+        console.log(`Adding column ${col} to beer_profiles table...`);
+        try {
+          let colDef = 'TEXT';
+          if (col === 'tolerance_beers' || col === 'tolerance_confidence') colDef = 'REAL';
+          if (col === 'activity_days' || col === 'tolerance_last_updated') colDef = 'INTEGER';
+
+          const defaultValue = col === 'tolerance_confidence' ? 'DEFAULT 0.5' :
+                            col === 'activity_days' ? 'DEFAULT 0' : '';
+
+          db.exec(`ALTER TABLE beer_profiles ADD COLUMN ${col} ${colDef} ${defaultValue}`);
+          console.log(`Column ${col} added successfully`);
+        } catch (error) {
+          console.warn(`Could not add column ${col}:`, error.message);
+        }
+      }
+    }
+  }
 };
 
 // Create tables
@@ -166,6 +198,45 @@ const initDb = () => {
     )
   `);
 
+  // Table to track beer profiles (private user data)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS beer_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL UNIQUE,
+      age INTEGER NOT NULL,
+      height INTEGER,
+      weight INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  // Table to track beer logs
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS beer_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Table to track drinking sessions per day (for tolerance calculation)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS beer_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      beer_count INTEGER DEFAULT 1,
+      sessions_count INTEGER DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(user_id, guild_id, date)
+    )
+  `);
+
   // Create indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_summaries_guild_channel 
@@ -185,6 +256,16 @@ const initDb = () => {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_cache_channel_deleted 
     ON cached_messages(channel_id, deleted);
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_beer_logs_user_guild 
+    ON beer_logs(user_id, guild_id, date);
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_beer_logs_guild_date 
+    ON beer_logs(guild_id, date);
   `);
 
   // Add author_display_name column if it doesn't exist

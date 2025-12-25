@@ -557,6 +557,271 @@ export const EventModel = {
   }
 };
 
+export const BeerModel = {
+  getProfile(userId) {
+    const stmt = db.prepare('SELECT * FROM beer_profiles WHERE user_id = ?');
+    return stmt.get(userId);
+  },
+
+  upsertProfile(userId, age, height, weight, toleranceDescription) {
+    const now = Math.floor(Date.now() / 1000);
+    const existing = this.getProfile(userId);
+
+    if (existing) {
+      const stmt = db.prepare(`
+        UPDATE beer_profiles 
+        SET age = COALESCE(?, age),
+            height = COALESCE(?, height),
+            weight = COALESCE(?, weight),
+            tolerance_description = COALESCE(?, tolerance_description),
+            updated_at = ?
+        WHERE user_id = ?
+      `);
+      return stmt.run(age, height, weight, toleranceDescription, now, userId);
+    } else {
+      const stmt = db.prepare(`
+        INSERT INTO beer_profiles (user_id, age, height, weight, tolerance_description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      return stmt.run(userId, age, height, weight, toleranceDescription, now, now);
+    }
+  },
+
+  updateTolerance(userId, toleranceBeers, toleranceConfidence) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      UPDATE beer_profiles 
+      SET tolerance_beers = ?,
+          tolerance_confidence = ?,
+          tolerance_last_updated = ?,
+          updated_at = ?
+      WHERE user_id = ?
+    `);
+    return stmt.run(toleranceBeers, toleranceConfidence, now, now, userId);
+  },
+
+  incrementActivityStreak(userId) {
+    const stmt = db.prepare(`
+      UPDATE beer_profiles 
+      SET activity_days = COALESCE(activity_days, 0) + 1,
+          last_activity_date = ?
+      WHERE user_id = ?
+    `);
+    const today = new Date().toISOString().split('T')[0];
+    return stmt.run(today, userId);
+  },
+
+  resetActivityStreak(userId) {
+    const stmt = db.prepare(`
+      UPDATE beer_profiles 
+      SET activity_streak = 0
+      WHERE user_id = ?
+    `);
+    return stmt.run(userId);
+  },
+
+  getProfilesForToleranceUpdate() {
+    const stmt = db.prepare(`
+      SELECT * FROM beer_profiles
+      WHERE tolerance_last_updated IS NULL 
+         OR tolerance_last_updated < ?
+    `);
+    const oneDayAgo = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+    return stmt.all(oneDayAgo);
+  },
+
+  logBeer(userId, guildId, date) {
+    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+    const stmt = db.prepare(`
+      INSERT INTO beer_logs (user_id, guild_id, date, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    return stmt.run(userId, guildId, dateStr, Math.floor(Date.now() / 1000));
+  },
+
+  getBeerCount(userId, guildId, startDate = null, endDate = null) {
+    let sql = 'SELECT COUNT(*) as count FROM beer_logs WHERE user_id = ?';
+    const params = [userId];
+
+    if (guildId) {
+      sql += ' AND guild_id = ?';
+      params.push(guildId);
+    }
+
+    if (startDate) {
+      sql += ' AND date >= ?';
+      params.push(typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0]);
+    }
+
+    if (endDate) {
+      sql += ' AND date <= ?';
+      params.push(typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0]);
+    }
+
+    const stmt = db.prepare(sql);
+    const result = stmt.get(...params);
+    return result.count;
+  },
+
+  getRecentBeers(userId, guildId, limit = 10) {
+    const stmt = db.prepare(`
+      SELECT * FROM beer_logs
+      WHERE user_id = ? AND guild_id = ?
+      ORDER BY date DESC, created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(userId, guildId, limit);
+  },
+
+  getLeaderboard(guildId, startDate, endDate) {
+    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
+    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
+
+    const stmt = db.prepare(`
+      SELECT 
+        bl.user_id,
+        bp.weight,
+        COUNT(*) as beer_count,
+        COUNT(DISTINCT bl.date) as drinking_days,
+        MIN(bl.date) as first_date
+      FROM beer_logs bl
+      LEFT JOIN beer_profiles bp ON bl.user_id = bp.user_id
+      WHERE bl.guild_id = ? AND bl.date >= ? AND bl.date <= ?
+      GROUP BY bl.user_id
+      ORDER BY beer_count DESC
+    `);
+
+    const entries = stmt.all(guildId, startDateStr, endDateStr);
+
+    return entries.map(entry => {
+      let bacEstimate = null;
+      
+      if (entry.weight) {
+        const totalAlcohol = entry.beer_count * 14;
+        const bodyWater = entry.weight * 0.6;
+        bacEstimate = (totalAlcohol / bodyWater) * 100;
+      }
+      
+      return {
+        ...entry,
+        bac_estimate: bacEstimate
+      };
+    });
+  },
+
+  getUserWeeklyStats(userId, guildId, startDate, endDate) {
+    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
+    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
+
+    const stmt = db.prepare(`
+      SELECT 
+        COUNT(*) as beer_count,
+        COUNT(DISTINCT date) as drinking_days,
+        GROUP_CONCAT(date, ',') as drinking_dates
+      FROM beer_logs
+      WHERE user_id = ? AND guild_id = ? AND date >= ? AND date <= ?
+    `);
+
+    return stmt.get(userId, guildId, startDateStr, endDateStr);
+  },
+
+  recordDrinkingSession(userId, guildId, date, beerCount) {
+    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+    const stmt = db.prepare(`
+      INSERT INTO beer_sessions (user_id, guild_id, date, beer_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, guild_id, date) DO UPDATE SET
+        beer_count = beer_count + excluded.beer_count,
+        sessions_count = sessions_count + 1,
+        updated_at = ?
+    `);
+    const now = Math.floor(Date.now() / 1000);
+    return stmt.run(userId, guildId, dateStr, beerCount, now, now);
+  },
+
+  getUserDrinkingPatterns(userId, guildId, days = 30) {
+    const stmt = db.prepare(`
+      SELECT 
+        COUNT(*) as total_sessions,
+        AVG(beer_count) as avg_beers_per_session,
+        MAX(beer_count) as max_beers,
+        MIN(beer_count) as min_beers,
+        COUNT(DISTINCT date) as drinking_days
+      FROM beer_sessions
+      WHERE user_id = ? AND guild_id = ? 
+        AND date >= date('now', '-${days} days')
+    `);
+    return stmt.get(userId, guildId);
+  },
+
+  getSoberStreak(userId, guildId) {
+    const stmt = db.prepare(`
+      WITH RECURSIVE date_series(d) AS (
+        SELECT date('now', '-14 days')
+        UNION ALL
+        SELECT date(d, '+1 day') FROM date_series WHERE d < date('now')
+      ),
+      sober_days AS (
+        SELECT ds.d
+        FROM date_series ds
+        LEFT JOIN beer_sessions bs 
+          ON bs.user_id = ? AND bs.guild_id = ? AND bs.date = ds.d
+        WHERE bs.date IS NULL
+        ORDER BY ds.d DESC
+      )
+      SELECT COUNT(*) as streak FROM sober_days
+    `);
+    const result = stmt.get(userId, guildId);
+    return result ? result.streak : 0;
+  },
+
+  getAllUsersForLeaderboard(guildId) {
+    const stmt = db.prepare(`
+      SELECT DISTINCT user_id FROM beer_logs WHERE guild_id = ?
+    `);
+    return stmt.all(guildId).map(r => r.user_id);
+  },
+
+  getWeeklyLeaderboardAll(guildId, startDate, endDate) {
+    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
+    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
+
+    const stmt = db.prepare(`
+      SELECT 
+        bl.user_id,
+        bp.weight,
+        COALESCE(COUNT(bl.id), 0) as beer_count,
+        COALESCE(COUNT(DISTINCT bl.date), 0) as drinking_days,
+        (SELECT COUNT(*) FROM beer_sessions 
+         WHERE user_id = bl.user_id AND guild_id = bl.guild_id 
+         AND date >= ? AND date < bl.date) as sober_days_count
+      FROM (SELECT DISTINCT user_id FROM beer_logs WHERE guild_id = ?) all_users
+      LEFT JOIN beer_logs bl ON all_users.user_id = bl.user_id 
+        AND bl.guild_id = ? AND bl.date >= ? AND bl.date <= ?
+      LEFT JOIN beer_profiles bp ON bl.user_id = bp.user_id
+      GROUP BY bl.user_id
+      ORDER BY beer_count DESC
+    `);
+
+    const entries = stmt.all(startDateStr, guildId, guildId, startDateStr, endDateStr);
+
+    return entries.map(entry => {
+      let bacEstimate = null;
+
+      if (entry.weight && entry.beer_count > 0) {
+        const totalAlcohol = entry.beer_count * 14;
+        const bodyWater = entry.weight * 0.6;
+        bacEstimate = (totalAlcohol / bodyWater) * 100;
+      }
+
+      return {
+        ...entry,
+        bac_estimate: bacEstimate
+      };
+    });
+  }
+};
+
 export const SettingsModel = {
   getSettings(guildId) {
     const stmt = db.prepare('SELECT * FROM guild_settings WHERE guild_id = ?');
