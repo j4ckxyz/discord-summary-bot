@@ -601,7 +601,7 @@ export const BeerModel = {
 
   incrementActivityStreak(userId) {
     const stmt = db.prepare(`
-      UPDATE beer_profiles 
+      UPDATE beer_profiles
       SET activity_days = COALESCE(activity_days, 0) + 1,
           last_activity_date = ?
       WHERE user_id = ?
@@ -708,31 +708,6 @@ export const BeerModel = {
     });
   },
 
-  getUserWeeklyStats(userId, guildId, startDate, endDate) {
-    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
-    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
-
-    const stmt = db.prepare(`
-      SELECT 
-        COUNT(*) as beer_count,
-        COUNT(DISTINCT date) as drinking_days,
-        GROUP_CONCAT(date, ',') as drinking_dates
-      FROM beer_logs
-      WHERE user_id = ? AND guild_id = ? AND date >= ? AND date <= ?
-    `);
-
-    return stmt.get(userId, guildId, startDateStr, endDateStr);
-  },
-
-  recordDrinkingSession(userId, guildId, date, beerCount) {
-    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
-    const stmt = db.prepare(`
-      INSERT INTO beer_logs (user_id, guild_id, date, created_at)
-      VALUES (?, ?, ?, ?)
-    `);
-    return stmt.run(userId, guildId, dateStr, Math.floor(Date.now() / 1000));
-  },
-
   getUserDrinkingPatterns(userId, guildId, days = 30) {
     const stmt = db.prepare(`
       SELECT 
@@ -762,7 +737,7 @@ export const BeerModel = {
       sober_days AS (
         SELECT ds.d
         FROM date_series ds
-        LEFT JOIN beer_logs bl 
+        LEFT JOIN beer_logs bl
           ON bl.user_id = ? AND bl.guild_id = ? AND bl.date = ds.d
         WHERE bl.date IS NULL
         ORDER BY ds.d DESC
@@ -771,41 +746,6 @@ export const BeerModel = {
     `);
     const result = stmt.get(userId, guildId);
     return result ? result.streak : 0;
-  },
-
-  getWeeklyLeaderboardAll(guildId, startDate, endDate) {
-    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
-    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
-
-    const stmt = db.prepare(`
-      SELECT 
-        bl.user_id,
-        bp.weight,
-        COALESCE(COUNT(bl.id), 0) as beer_count,
-        COALESCE(COUNT(DISTINCT bl.date), 0) as drinking_days
-      FROM beer_logs bl
-      LEFT JOIN beer_profiles bp ON bl.user_id = bp.user_id
-      WHERE bl.guild_id = ? AND bl.date >= ? AND bl.date <= ?
-      GROUP BY bl.user_id
-      ORDER BY beer_count DESC
-    `);
-
-    const entries = stmt.all(guildId, startDateStr, endDateStr);
-
-    return entries.map(entry => {
-      let bacEstimate = null;
-
-      if (entry.weight && entry.beer_count > 0) {
-        const totalAlcohol = entry.beer_count * 14;
-        const bodyWater = entry.weight * 0.6;
-        bacEstimate = (totalAlcohol / bodyWater) * 100;
-      }
-
-      return {
-        ...entry,
-        bac_estimate: bacEstimate
-      };
-    });
   }
 };
 

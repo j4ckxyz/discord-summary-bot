@@ -302,10 +302,11 @@ export default {
 
       for (const date of datesToLog) {
         BeerModel.logBeer(userId, guildId, date);
-        BeerModel.recordDrinkingSession(userId, guildId, date, 1);
       }
 
-      BeerModel.incrementActivityStreak(userId);
+      if (datesToLog.length > 0 && datesToLog[0]) {
+        BeerModel.incrementActivityStreak(userId);
+      }
 
       const dateStr = datesToLog.length === 1
         ? `<t:${Math.floor(datesToLog[0].getTime() / 1000)}:D>`
@@ -522,7 +523,7 @@ export default {
       const now = new Date();
 
       const numberMatch = content.match(/(\d+)/);
-      const count = numberMatch ? Math.min(parseInt(numberMatch[1]), 14) : 1;
+      const count = numberMatch ? Math.min(parseInt(numberMatch[1]), 14) :1;
 
       const today = new Date(now.toISOString().split('T')[0]);
 
@@ -530,7 +531,6 @@ export default {
         BeerModel.logBeer(userId, guildId, today);
       }
 
-      BeerModel.recordDrinkingSession(userId, guildId, today, 1);
       BeerModel.incrementActivityStreak(userId);
 
       return message.reply(`🍺 **Beer Logged!**\n\n+${count} beer(s) for today`);
