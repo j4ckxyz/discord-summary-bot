@@ -89,7 +89,7 @@ export default {
           option.setName('age')
             .setDescription('Your age')
             .setRequired(true)
-            .setMinValue(18)
+            .setMinValue(16)
             .setMaxValue(120))
         .addIntegerOption(option =>
           option.setName('height_cm')
@@ -171,6 +171,13 @@ export default {
       const heightInches = interaction.options.getInteger('height_inches');
       const weight = interaction.options.getInteger('weight');
       const tolerance = interaction.options.getString('tolerance');
+
+      if (age < 16) {
+        return interaction.reply({
+          content: '❌ You must be at least 16 years old to use this feature',
+          ephemeral: true
+        });
+      }
 
       const { BeerModel } = await import('../database/models.js');
 
@@ -497,6 +504,10 @@ export default {
       const age = parseInt(ageMatch[1]);
       const height = heightMatch ? parseInt(heightMatch[1]) : null;
       const weight = weightMatch ? parseInt(weightMatch[1]) : null;
+
+      if (age < 16) {
+        return message.reply('❌ You must be at least 16 years old to use this feature');
+      }
 
       BeerModel.upsertProfile(userId, age, height, weight);
 
