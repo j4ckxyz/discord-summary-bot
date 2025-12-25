@@ -14,6 +14,11 @@ class BeerToleranceService {
       const { BeerModel } = await import('../database/models.js');
       const profiles = BeerModel.getProfilesForToleranceUpdate();
 
+      if (profiles.length === 0) {
+        logger.beer('No profiles to update');
+        return;
+      }
+
       logger.beer(`Updating tolerance for ${profiles.length} user(s)`);
 
       for (const profile of profiles) {

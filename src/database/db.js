@@ -73,33 +73,23 @@ const migrateDb = () => {
   const beerTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='beer_profiles'").all();
   if (beerTables.length > 0) {
     const newColumns = [
-      'tolerance_description',
-      'tolerance_beers',
-      'tolerance_confidence',
-      'tolerance_last_updated',
-      'activity_days',
-      'last_activity_date'
+      { name: 'tolerance_description', type: 'TEXT' },
+      { name: 'tolerance_beers', type: 'REAL' },
+      { name: 'tolerance_confidence', type: 'REAL', default: 'DEFAULT 0.5' },
+      { name: 'tolerance_last_updated', type: 'INTEGER' },
+      { name: 'activity_days', type: 'INTEGER', default: 'DEFAULT 0' },
+      { name: 'last_activity_date', type: 'TEXT' }
     ];
 
     for (const col of newColumns) {
-      if (!columnExists('beer_profiles', col)) {
-        console.log(`Adding column ${col} to beer_profiles table...`);
+      if (!columnExists('beer_profiles', col.name)) {
+        console.log(`Adding column ${col.name} to beer_profiles table...`);
         try {
-          let colDef = 'TEXT';
-          if (col === 'tolerance_beers' || col === 'tolerance_confidence') {
-            colDef = 'REAL';
-          }
-          if (col === 'activity_days' || col === 'tolerance_last_updated') {
-            colDef = 'INTEGER';
-          }
-
-          const defaultClause = (col === 'tolerance_confidence') ? 'DEFAULT 0.5' :
-                             (col === 'activity_days') ? 'DEFAULT 0' : '';
-
-          db.exec(`ALTER TABLE beer_profiles ADD COLUMN ${col} ${colDef} ${defaultClause}`);
-          console.log(`Column ${col} added successfully`);
+          const defaultClause = col.default || '';
+          db.exec(`ALTER TABLE beer_profiles ADD COLUMN ${col.name} ${col.type} ${defaultClause}`);
+          console.log(`Column ${col.name} added successfully`);
         } catch (error) {
-          console.warn(`Could not add column ${col}:`, error.message);
+          console.warn(`Could not add column ${col.name}:`, error.message);
         }
       }
     }
@@ -226,21 +216,6 @@ const initDb = () => {
     )
   `);
 
-  // Table to track drinking sessions per day (for tolerance calculation)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS beer_sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL,
-      guild_id TEXT NOT NULL,
-      date TEXT NOT NULL,
-      beer_count INTEGER DEFAULT 1,
-      sessions_count INTEGER DEFAULT 1,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(user_id, guild_id, date)
-    )
-  `);
-
   // Create indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_summaries_guild_channel 
@@ -268,6 +243,11 @@ const initDb = () => {
   `);
 
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_beer_logs_user_guild 
+    ON beer_logs(user_id, guild_id, date);
+  `);
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_beer_logs_guild_date 
     ON beer_logs(guild_id, date);
   `);
@@ -280,8 +260,10 @@ const initDb = () => {
   }
 };
 
-// Run migration first, then initialize
-migrateDb();
+// Initialize database first
 initDb();
+
+// Then run migrations (add new columns to existing tables)
+migrateDb();
 
 export default db;

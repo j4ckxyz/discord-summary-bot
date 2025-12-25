@@ -5,6 +5,12 @@ import logger from '../utils/logger.js';
 const BEER_ALCOHOL_GRAMS = 14;
 const WIDMARK_RATIO = 0.6;
 
+const TOLERANCE_LEVELS = {
+  low: { beers: 2, label: 'Low (1-2 beers)' },
+  medium: { beers: 4, label: 'Medium (3-4 beers)' },
+  high: { beers: 6, label: 'High (5-7 beers)' }
+};
+
 async function getOrCreateProfile(userId) {
   const { BeerModel } = await import('../database/models.js');
   return BeerModel.getProfile(userId);
@@ -18,24 +24,6 @@ async function calculateBAC(beers, weightKg, hoursSinceFirst) {
   const bac = (totalAlcohol / bodyWater) * 100;
 
   return Math.max(0, bac - (hoursSinceFirst * 0.015));
-}
-
-async function parseToleranceFromDescription(description) {
-  try {
-    const systemPrompt = `You are a tolerance analyzer. Extract the number of beers it takes for someone to feel drunk from natural language.
-    Return ONLY a number (integer or decimal). No explanations, no units.`;
-
-    const userPrompt = `Extract the beer tolerance from this description: "${description}"`;
-    const result = await llmService.generateCompletion(systemPrompt, userPrompt);
-
-    const parsed = parseFloat(result.trim());
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
 }
 
 async function calculateAdaptiveTolerance(userId, guildId) {
@@ -60,19 +48,9 @@ async function calculateAdaptiveTolerance(userId, guildId) {
   };
 }
 
-async function getDrunkAssessment(beers, timeRange) {
-  try {
-    const systemPrompt = `You are a health assistant providing brief, factual alcohol consumption assessments.
-    Be concise and serious. No jokes. Focus on health implications.
-    Keep responses under 100 characters.`;
-    
-    const userPrompt = `User has consumed ${beers} beer(s) over ${timeRange}.
-    Assess this briefly without jokes. Focus on health impact.`;
-    
-    return await llmService.generateCompletion(systemPrompt, userPrompt);
-  } catch (e) {
-    return null;
-  }
+function convertFeetInchesToCm(feet, inches) {
+  const totalInches = (feet * 12) + inches;
+  return Math.round(totalInches * 2.54);
 }
 
 function getBACLevel(bac) {
@@ -82,6 +60,21 @@ function getBACLevel(bac) {
   if (bac < 0.10) return { emoji: '😵‍💫', label: 'Drunk', color: 0xED4245 };
   if (bac < 0.15) return { emoji: '🤢', label: 'Very drunk', color: 0xC41E3A };
   return { emoji: '🚑', label: 'Danger zone', color: 0x000000 };
+}
+
+async function getDrunkAssessment(beers, timeRange) {
+  try {
+    const systemPrompt = `You are a health assistant providing brief, factual alcohol consumption assessments.
+    Be concise and serious. No jokes. Focus on health implications.
+    Keep responses under 100 characters.`;
+
+    const userPrompt = `User has consumed ${beers} beer(s) over ${timeRange}.
+    Assess this briefly without jokes. Focus on health impact.`;
+
+    return await llmService.generateCompletion(systemPrompt, userPrompt);
+  } catch (e) {
+    return null;
+  }
 }
 
 export default {
@@ -99,11 +92,23 @@ export default {
             .setMinValue(18)
             .setMaxValue(120))
         .addIntegerOption(option =>
-          option.setName('height')
-            .setDescription('Height in cm (for BAC calculation, optional)')
+          option.setName('height_cm')
+            .setDescription('Height in cm (or use height_feet)')
             .setRequired(false)
             .setMinValue(100)
             .setMaxValue(250))
+        .addIntegerOption(option =>
+          option.setName('height_feet')
+            .setDescription('Height in feet')
+            .setRequired(false)
+            .setMinValue(3)
+            .setMaxValue(8))
+        .addIntegerOption(option =>
+          option.setName('height_inches')
+            .setDescription('Height in inches (use with height_feet)')
+            .setRequired(false)
+            .setMinValue(0)
+            .setMaxValue(11))
         .addIntegerOption(option =>
           option.setName('weight')
             .setDescription('Weight in kg (for BAC calculation, optional)')
@@ -112,12 +117,17 @@ export default {
             .setMaxValue(200))
         .addStringOption(option =>
           option.setName('tolerance')
-            .setDescription('Your tolerance: "3 beers and I\'m drunk" (updates over time)')
-            .setRequired(false)))
+            .setDescription('Your tolerance level (updates over time)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Low (1-2 beers)', value: 'low' },
+              { name: 'Medium (3-4 beers)', value: 'medium' },
+              { name: 'High (5-7 beers)', value: 'high' }
+            )))
     .addSubcommand(subcommand =>
       subcommand
         .setName('tolerance')
-        .setDescription('Update your alcohol tolerance manually or view current estimate'))
+        .setDescription('View your alcohol tolerance estimate'))
     .addSubcommand(subcommand =>
       subcommand
         .setName('log')
@@ -137,7 +147,7 @@ export default {
     .addSubcommand(subcommand =>
       subcommand
         .setName('leaderboard')
-        .setDescription('View the weekly beer leaderboard')
+        .setDescription('View weekly beer leaderboard')
         .addStringOption(option =>
           option.setName('sort')
             .setDescription('Sort by beer count or BAC level')
@@ -156,18 +166,27 @@ export default {
 
     if (subcommand === 'setup') {
       const age = interaction.options.getInteger('age');
-      const height = interaction.options.getInteger('height');
+      const heightCm = interaction.options.getInteger('height_cm');
+      const heightFeet = interaction.options.getInteger('height_feet');
+      const heightInches = interaction.options.getInteger('height_inches');
       const weight = interaction.options.getInteger('weight');
       const tolerance = interaction.options.getString('tolerance');
 
       const { BeerModel } = await import('../database/models.js');
 
-      let toleranceBeers = null;
-      if (tolerance) {
-        toleranceBeers = await parseToleranceFromDescription(tolerance);
+      let height = null;
+      if (heightCm) {
+        height = heightCm;
+      } else if (heightFeet && heightInches !== null) {
+        height = convertFeetInchesToCm(heightFeet, heightInches);
       }
 
-      BeerModel.upsertProfile(userId, age, height || null, weight || null, tolerance || null);
+      let toleranceBeers = null;
+      if (tolerance && TOLERANCE_LEVELS[tolerance]) {
+        toleranceBeers = TOLERANCE_LEVELS[tolerance].beers;
+      }
+
+      BeerModel.upsertProfile(userId, age, height, weight || null);
 
       if (toleranceBeers) {
         BeerModel.updateTolerance(userId, toleranceBeers, 0.5);
@@ -175,7 +194,7 @@ export default {
 
       const heightText = height ? `${height}cm` : 'not set';
       const weightText = weight ? `${weight}kg` : 'not set';
-      const toleranceText = toleranceBeers ? `~${toleranceBeers} beers` : 'not set (will adapt over time)';
+      const toleranceText = tolerance ? `${TOLERANCE_LEVELS[tolerance].label}` : 'not set (will adapt over time)';
 
       await interaction.reply({
         content: `✅ **Profile Updated**\n\nAge: ${age}\nHeight: ${heightText} 🔒 (private)\nWeight: ${weightText} 🔒 (private)\nTolerance: ${toleranceText}\n\n💡 Your tolerance will adapt over time based on your drinking patterns!`,
@@ -197,13 +216,10 @@ export default {
       const adaptiveTolerance = await calculateAdaptiveTolerance(userId, guildId);
 
       let description = '';
-      if (profile.tolerance_description) {
-        description += `**Your Input:**\n"${profile.tolerance_description}"\n\n`;
-      }
 
       if (profile.tolerance_beers) {
         const confidencePercent = Math.round((profile.tolerance_confidence || 0) * 100);
-        description += `**Estimated Tolerance:** ~${profile.tolerance_beers} beers (${confidencePercent}% confidence)\n\n`;
+        description += `**Base Tolerance:** ~${profile.tolerance_beers} beers (${confidencePercent}% confidence)\n\n`;
       }
 
       if (adaptiveTolerance) {
@@ -212,18 +228,21 @@ export default {
       }
 
       if (!profile.tolerance_beers && !adaptiveTolerance) {
-        description += 'ℹ️ Log some beers and the system will learn your tolerance over time!\n\n';
+        description += 'ℹ️ Log some beers and system will learn your tolerance over time!\n\n';
       }
 
-      description += '**Tolerance Examples:**\n• "3 beers and I\'m tipsy"\n• "5 beers to get drunk"\n• "2 beers is my limit"';
-      description += '\n\n💡 Your tolerance updates daily as you log more data!';
+      description += '**Tolerance Levels:**\n';
+      description += '• Low: 1-2 beers (lightweight)\n';
+      description += '• Medium: 3-4 beers (average)\n';
+      description += '• High: 5-7 beers (high tolerance)\n\n';
+      description += '💡 Your tolerance updates daily as you log more data!';
 
       await interaction.reply({
         content: `🍺 **Your Tolerance**\n\n${description}`,
         ephemeral: true
       });
     }
-    
+
     else if (subcommand === 'log') {
       const { BeerModel } = await import('../database/models.js');
       const profile = await getOrCreateProfile(userId);
@@ -287,7 +306,7 @@ export default {
 
       await interaction.reply(`🍺 **Beer Logged!**\n\n+${datesToLog.length} beer(s) for ${dateStr}\n📊 Your tolerance is being updated...`);
     }
-    
+
     else if (subcommand === 'status') {
       const { BeerModel } = await import('../database/models.js');
       const profile = await getOrCreateProfile(userId);
@@ -330,11 +349,11 @@ export default {
       if (adaptiveTolerance) {
         const confidencePercent = Math.round(adaptiveTolerance.tolerance_confidence * 100);
         const beersRemaining = Math.max(0, Math.floor(adaptiveTolerance.tolerance_beers - todayBeers));
-        toleranceInfo = `${adaptiveTolerance.tolerance_beers} beers (${confidencePercent}% confidence)\n~${beersRemaining} to your limit`;
+        toleranceInfo = `${adaptiveTolerance.tolerance_beers} beers (${confidencePercent}%)\n~${beersRemaining} to your limit`;
       } else if (profile && profile.tolerance_beers) {
         const confidencePercent = Math.round((profile.tolerance_confidence || 0) * 100);
         const beersRemaining = Math.max(0, Math.floor(profile.tolerance_beers - todayBeers));
-        toleranceInfo = `${profile.tolerance_beers} beers (${confidencePercent}% confidence)\n~${beersRemaining} to your limit`;
+        toleranceInfo = `${profile.tolerance_beers} beers (${confidencePercent}%)\n~${beersRemaining} to your limit`;
       } else {
         toleranceInfo = 'Log more beers to estimate';
       }
@@ -385,7 +404,7 @@ export default {
 
       await interaction.reply({ embeds: [embed], ephemeral: true });
     }
-    
+
     else if (subcommand === 'leaderboard') {
       const { BeerModel } = await import('../database/models.js');
       const sortBy = interaction.options.getString('sort') || 'beers';
@@ -465,98 +484,101 @@ export default {
     const userId = message.author.id;
     const guildId = message.guildId;
     const content = args.join(' ').toLowerCase();
-    
+
     if (content.includes('setup') || content.includes('profile')) {
       const ageMatch = content.match(/age[:\s]*(\d+)/i);
       const heightMatch = content.match(/height[:\s]*(\d+)/i);
       const weightMatch = content.match(/weight[:\s]*(\d+)/i);
-      
+
       if (!ageMatch) {
         return message.reply('Usage: `!beer setup age:25 height:180 weight:75` (height/weight optional)');
       }
-      
+
       const age = parseInt(ageMatch[1]);
       const height = heightMatch ? parseInt(heightMatch[1]) : null;
       const weight = weightMatch ? parseInt(weightMatch[1]) : null;
-      
+
       BeerModel.upsertProfile(userId, age, height, weight);
-      
+
       const heightText = height ? `${height}cm` : 'not set';
       const weightText = weight ? `${weight}kg` : 'not set';
-      
+
       return message.reply(`✅ **Profile Updated**\n\nAge: ${age}\nHeight: ${heightText} 🔒\nWeight: ${weightText} 🔒`);
     }
-    
+
     if (content.includes('log')) {
       const profile = await getOrCreateProfile(userId);
       const now = new Date();
-      
+
       const numberMatch = content.match(/(\d+)/);
       const count = numberMatch ? Math.min(parseInt(numberMatch[1]), 14) : 1;
-      
+
       const today = new Date(now.toISOString().split('T')[0]);
-      
+
       for (let i = 0; i < count; i++) {
         BeerModel.logBeer(userId, guildId, today);
       }
-      
+
+      BeerModel.recordDrinkingSession(userId, guildId, today, 1);
+      BeerModel.incrementActivityStreak(userId);
+
       return message.reply(`🍺 **Beer Logged!**\n\n+${count} beer(s) for today`);
     }
-    
+
     if (content.includes('status') || content.includes('stats')) {
       const { BeerModel } = await import('../database/models.js');
       const profile = await getOrCreateProfile(userId);
       const now = new Date();
-      
+
       const today = new Date(now.toISOString().split('T')[0]);
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      
+
       const todayBeers = BeerModel.getBeerCount(userId, guildId, today, now);
       const weekBeers = BeerModel.getBeerCount(userId, guildId, weekAgo, now);
       const monthBeers = BeerModel.getBeerCount(userId, guildId, monthAgo, now);
       const allTime = BeerModel.getBeerCount(userId, guildId);
-      
+
       let bacText = '';
       if (profile && profile.weight) {
         const hoursSinceFirst = 2;
         const bacLevel = await calculateBAC(todayBeers, profile.weight, hoursSinceFirst);
-        
+
         if (bacLevel !== null) {
           const level = getBACLevel(bacLevel);
           bacText = `\n📊 BAC Estimate: ${bacLevel.toFixed(3)}% (${level.label}) ${level.emoji}`;
         }
       }
-      
+
       return message.reply(`🍺 **Your Stats**\n\nToday: ${todayBeers} 🍺\nThis Week: ${weekBeers} 🍺\nThis Month: ${monthBeers} 🍺\nAll Time: ${allTime} 🍺${bacText}`);
     }
-    
+
     if (content.includes('leaderboard') || content.includes('lb')) {
       const now = new Date();
       const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
-      const entries = BeerModel.getLeaderboard(guildId, weekStart, now);
-      
+
+      const entries = BeerModel.getWeeklyLeaderboardAll(guildId, weekStart, now);
+
       if (entries.length === 0) {
         return message.reply('🍺 No beers logged this week yet!');
       }
-      
+
       entries.sort((a, b) => b.beer_count - a.beer_count);
       entries = entries.slice(0, 5);
-      
+
       const medalEmojis = ['🥇', '🥈', '🥉'];
       let description = '';
-      
+
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
         const rankEmoji = i < 3 ? medalEmojis[i] : '🍺';
         const username = await message.client.users.fetch(entry.user_id).then(u => u.username).catch(() => 'Unknown');
         description += `${rankEmoji} **${username}** — ${entry.beer_count} 🍺\n`;
       }
-      
+
       return message.reply(`🍺 **Weekly Leaderboard**\n\n${description}`);
     }
-    
+
     message.reply('Usage: `!beer setup`, `!beer log [number]`, `!beer status`, `!beer leaderboard`');
   }
 };

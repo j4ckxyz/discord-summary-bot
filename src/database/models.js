@@ -563,34 +563,33 @@ export const BeerModel = {
     return stmt.get(userId);
   },
 
-  upsertProfile(userId, age, height, weight, toleranceDescription) {
+  upsertProfile(userId, age, height, weight) {
     const now = Math.floor(Date.now() / 1000);
     const existing = this.getProfile(userId);
 
     if (existing) {
       const stmt = db.prepare(`
-        UPDATE beer_profiles 
+        UPDATE beer_profiles
         SET age = COALESCE(?, age),
             height = COALESCE(?, height),
             weight = COALESCE(?, weight),
-            tolerance_description = COALESCE(?, tolerance_description),
             updated_at = ?
         WHERE user_id = ?
       `);
-      return stmt.run(age, height, weight, toleranceDescription, now, userId);
+      return stmt.run(age, height, weight, now, userId);
     } else {
       const stmt = db.prepare(`
-        INSERT INTO beer_profiles (user_id, age, height, weight, tolerance_description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO beer_profiles (user_id, age, height, weight, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
       `);
-      return stmt.run(userId, age, height, weight, toleranceDescription, now, now);
+      return stmt.run(userId, age, height, weight, now, now);
     }
   },
 
   updateTolerance(userId, toleranceBeers, toleranceConfidence) {
     const now = Math.floor(Date.now() / 1000);
     const stmt = db.prepare(`
-      UPDATE beer_profiles 
+      UPDATE beer_profiles
       SET tolerance_beers = ?,
           tolerance_confidence = ?,
           tolerance_last_updated = ?,
@@ -728,28 +727,27 @@ export const BeerModel = {
   recordDrinkingSession(userId, guildId, date, beerCount) {
     const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
     const stmt = db.prepare(`
-      INSERT INTO beer_sessions (user_id, guild_id, date, beer_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, guild_id, date) DO UPDATE SET
-        beer_count = beer_count + excluded.beer_count,
-        sessions_count = sessions_count + 1,
-        updated_at = ?
+      INSERT INTO beer_logs (user_id, guild_id, date, created_at)
+      VALUES (?, ?, ?, ?)
     `);
-    const now = Math.floor(Date.now() / 1000);
-    return stmt.run(userId, guildId, dateStr, beerCount, now, now);
+    return stmt.run(userId, guildId, dateStr, Math.floor(Date.now() / 1000));
   },
 
   getUserDrinkingPatterns(userId, guildId, days = 30) {
     const stmt = db.prepare(`
       SELECT 
         COUNT(*) as total_sessions,
-        AVG(beer_count) as avg_beers_per_session,
-        MAX(beer_count) as max_beers,
-        MIN(beer_count) as min_beers,
-        COUNT(DISTINCT date) as drinking_days
-      FROM beer_sessions
-      WHERE user_id = ? AND guild_id = ? 
-        AND date >= date('now', '-${days} days')
+        AVG(daily_count) as avg_beers_per_session,
+        MAX(daily_count) as max_beers,
+        MIN(daily_count) as min_beers,
+        COUNT(*) as drinking_days
+      FROM (
+        SELECT date, COUNT(*) as daily_count
+        FROM beer_logs
+        WHERE user_id = ? AND guild_id = ? 
+          AND date >= date('now', '-${days} days')
+        GROUP BY date
+      ) daily_stats
     `);
     return stmt.get(userId, guildId);
   },
@@ -764,22 +762,15 @@ export const BeerModel = {
       sober_days AS (
         SELECT ds.d
         FROM date_series ds
-        LEFT JOIN beer_sessions bs 
-          ON bs.user_id = ? AND bs.guild_id = ? AND bs.date = ds.d
-        WHERE bs.date IS NULL
+        LEFT JOIN beer_logs bl 
+          ON bl.user_id = ? AND bl.guild_id = ? AND bl.date = ds.d
+        WHERE bl.date IS NULL
         ORDER BY ds.d DESC
       )
       SELECT COUNT(*) as streak FROM sober_days
     `);
     const result = stmt.get(userId, guildId);
     return result ? result.streak : 0;
-  },
-
-  getAllUsersForLeaderboard(guildId) {
-    const stmt = db.prepare(`
-      SELECT DISTINCT user_id FROM beer_logs WHERE guild_id = ?
-    `);
-    return stmt.all(guildId).map(r => r.user_id);
   },
 
   getWeeklyLeaderboardAll(guildId, startDate, endDate) {
@@ -791,19 +782,15 @@ export const BeerModel = {
         bl.user_id,
         bp.weight,
         COALESCE(COUNT(bl.id), 0) as beer_count,
-        COALESCE(COUNT(DISTINCT bl.date), 0) as drinking_days,
-        (SELECT COUNT(*) FROM beer_sessions 
-         WHERE user_id = bl.user_id AND guild_id = bl.guild_id 
-         AND date >= ? AND date < bl.date) as sober_days_count
-      FROM (SELECT DISTINCT user_id FROM beer_logs WHERE guild_id = ?) all_users
-      LEFT JOIN beer_logs bl ON all_users.user_id = bl.user_id 
-        AND bl.guild_id = ? AND bl.date >= ? AND bl.date <= ?
+        COALESCE(COUNT(DISTINCT bl.date), 0) as drinking_days
+      FROM beer_logs bl
       LEFT JOIN beer_profiles bp ON bl.user_id = bp.user_id
+      WHERE bl.guild_id = ? AND bl.date >= ? AND bl.date <= ?
       GROUP BY bl.user_id
       ORDER BY beer_count DESC
     `);
 
-    const entries = stmt.all(startDateStr, guildId, guildId, startDateStr, endDateStr);
+    const entries = stmt.all(guildId, startDateStr, endDateStr);
 
     return entries.map(entry => {
       let bacEstimate = null;
