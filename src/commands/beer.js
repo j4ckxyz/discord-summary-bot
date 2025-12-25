@@ -176,12 +176,40 @@ export default {
               { name: 'Highest BAC (Current)', value: 'bac' },
               { name: 'Longest Sober Streak', value: 'sober' },
               { name: 'Most Active Days (Weekly)', value: 'days' }
-            ))),
+            )))
+    .addSubcommand(subcommand =>
+        subcommand
+          .setName('reset')
+          .setDescription('NUCLEAR OPTION: Reset all beer data (Owner Only)')
+    ),
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
     const userId = interaction.user.id;
     const guildId = interaction.guildId;
+
+    // --- RESET (Owner Only) ---
+    if (subcommand === 'reset') {
+        const { config } = await import('../utils/config.js');
+        const botOwnerId = process.env.BOT_OWNER_ID || config.botOwnerId;
+
+        if (userId !== botOwnerId) {
+            return interaction.reply({
+                content: '⛔ **Access Denied**\nThis command is restricted to the bot owner.',
+                ephemeral: true
+            });
+        }
+
+        // Double check confirmation (using a button would be better but keeping it simple for CLI)
+        // Actually, let's just do it with a warning since it's owner only.
+        
+        BeerModel.resetAllLogs();
+        
+        return interaction.reply({
+            content: '☢️ **NUCLEAR RESET COMPLETE**\nAll beer logs and activity stats have been wiped.\nUser profiles (height/weight/limit) have been preserved.',
+            ephemeral: true
+        });
+    }
 
     // --- Rate Limit Check (except for setup) ---
     if (subcommand !== 'setup') {

@@ -630,6 +630,30 @@ export const BeerModel = {
     return stmt.run(userId);
   },
 
+  resetAllLogs() {
+    // Transaction to ensure atomicity
+    const resetTx = db.transaction(() => {
+      // 1. Delete all logs
+      db.prepare('DELETE FROM beer_logs').run();
+
+      // 2. Reset activity stats in profiles
+      db.prepare(`
+        UPDATE beer_profiles
+        SET activity_days = 0,
+            last_activity_date = NULL
+        -- We don't have an explicit 'activity_streak' column in schema from db.js 
+        -- but the code references it? 
+        -- Checking schema in db.js: 
+        -- "activity_days INTEGER DEFAULT 0", "last_activity_date TEXT"
+        -- There is no explicit activity_streak column in the schema created in db.js!
+        -- Wait, 'getSoberStreak' calculates it dynamically.
+        -- 'incrementActivityStreak' updates 'activity_days'.
+        -- So just resetting activity_days and logs is sufficient for streaks calculated from logs.
+      `).run();
+    });
+    return resetTx();
+  },
+
   getProfilesForToleranceUpdate() {
     const stmt = db.prepare(`
       SELECT * FROM beer_profiles
