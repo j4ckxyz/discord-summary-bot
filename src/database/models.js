@@ -629,6 +629,60 @@ export const BeerModel = {
     return stmt.all(oneDayAgo);
   },
 
+  getDailyStats(userId, guildId, startDate, endDate) {
+    const startDateStr = typeof startDate === 'string' ? startDate : startDate.toISOString().split('T')[0];
+    const endDateStr = typeof endDate === 'string' ? endDate : endDate.toISOString().split('T')[0];
+
+    const stmt = db.prepare(`
+      SELECT date, COUNT(*) as count 
+      FROM beer_logs 
+      WHERE user_id = ? AND guild_id = ? AND date >= ? AND date <= ?
+      GROUP BY date
+    `);
+    return stmt.all(userId, guildId, startDateStr, endDateStr);
+  },
+
+  logBeers(userId, guildId, date, count) {
+    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+    const now = Math.floor(Date.now() / 1000);
+    
+    const insert = db.prepare(`
+      INSERT INTO beer_logs (user_id, guild_id, date, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    const logTransaction = db.transaction((qty) => {
+      for (let i = 0; i < qty; i++) {
+        insert.run(userId, guildId, dateStr, now);
+      }
+    });
+
+    return logTransaction(count);
+  },
+
+  checkRateLimit(userId) {
+    // Limit: Max 5 logging actions in last 60 seconds
+    const now = Math.floor(Date.now() / 1000);
+    const window = now - 60;
+    
+    // We need to check distinct created_at timestamps to group bulk logs if they happen effectively instantly?
+    // Actually, each log gets same timestamp in my bulk implementation? Yes.
+    // But distinct 'actions' is harder to track without an 'action_id'.
+    // Simple approach: Count total logs in last minute. If > 20, stop.
+    // Or, count distinct timestamps?
+    
+    // Let's rely on a separate simple key-value store or in-memory map? 
+    // No, stateless is better. Let's use the DB.
+    
+    const stmt = db.prepare(`
+      SELECT COUNT(*) as count FROM beer_logs 
+      WHERE user_id = ? AND created_at > ?
+    `);
+    
+    const result = stmt.get(userId, window);
+    return result.count < 25; // Max 25 beers logged in a minute? Fair.
+  },
+
   logBeer(userId, guildId, date) {
     const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
     const stmt = db.prepare(`
@@ -729,23 +783,35 @@ export const BeerModel = {
 
   getSoberStreak(userId, guildId) {
     const stmt = db.prepare(`
-      WITH RECURSIVE date_series(d) AS (
-        SELECT date('now', '-14 days')
-        UNION ALL
-        SELECT date(d, '+1 day') FROM date_series WHERE d < date('now')
-      ),
-      sober_days AS (
-        SELECT ds.d
-        FROM date_series ds
-        LEFT JOIN beer_logs bl
-          ON bl.user_id = ? AND bl.guild_id = ? AND bl.date = ds.d
-        WHERE bl.date IS NULL
-        ORDER BY ds.d DESC
-      )
-      SELECT COUNT(*) as streak FROM sober_days
+      SELECT date FROM beer_logs 
+      WHERE user_id = ? AND guild_id = ? 
+      ORDER BY date DESC 
+      LIMIT 1
     `);
-    const result = stmt.get(userId, guildId);
-    return result ? result.streak : 0;
+    const lastLog = stmt.get(userId, guildId);
+    
+    if (!lastLog) {
+      // User has never logged a beer in this guild
+      return -1;
+    }
+    
+    const lastDate = new Date(lastLog.date);
+    const now = new Date();
+    // Reset time part of now to avoid timezone issues? 
+    // Actually lastLog.date is UTC YYYY-MM-DD (midnight).
+    // So we should compare against UTC now.
+    
+    const diffTime = now.getTime() - lastDate.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    return Math.max(0, diffDays);
+  },
+
+  getAllParticipants(guildId) {
+    const stmt = db.prepare(`
+      SELECT DISTINCT user_id FROM beer_logs WHERE guild_id = ?
+    `);
+    return stmt.all(guildId);
   }
 };
 
