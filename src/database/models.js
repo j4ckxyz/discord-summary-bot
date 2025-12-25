@@ -599,6 +599,17 @@ export const BeerModel = {
     return stmt.run(toleranceBeers, toleranceConfidence, now, now, userId);
   },
 
+  updateDailyLimit(userId, limit) {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = db.prepare(`
+      UPDATE beer_profiles
+      SET daily_limit = ?,
+          updated_at = ?
+      WHERE user_id = ?
+    `);
+    return stmt.run(limit, now, userId);
+  },
+
   incrementActivityStreak(userId) {
     const stmt = db.prepare(`
       UPDATE beer_profiles

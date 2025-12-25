@@ -4,7 +4,7 @@ import { BeerModel } from '../database/models.js';
 
 const BEER_ALCOHOL_GRAMS = 14;
 const WIDMARK_RATIO = 0.6; // Average for men/women mix
-const MAX_LOG_AMOUNT = 24; // Max beers in one log command
+const MAX_LOG_AMOUNT = 12; // Lowered hard limit
 
 const TOLERANCE_LEVELS = {
   low: { beers: 2, label: 'Low (1-2 beers)' },
@@ -13,6 +13,31 @@ const TOLERANCE_LEVELS = {
 };
 
 // --- Helpers ---
+
+async function calculatePersonalLimit(age, height, weight) {
+    if (!age) return 15; // Fallback if no profile data
+
+    // Use LLM to determine a sensible "stopping point" based on biology
+    // This isn't medical advice, but a "whoa there" rate limit to prevent bot abuse
+    const systemPrompt = `You are a strict health safety AI. Your job is to calculate a "Maximum Daily Beer Logging Limit" for a Discord bot to prevent abuse/spam.\n    \n    Data:\n    - Age: ${age}\n    - Weight: ${weight ? weight + 'kg' : 'Unknown'}\n    - Height: ${height ? height + 'cm' : 'Unknown'}\n    \n    Rules:\n    1. This is NOT a recommended drinking amount. It is a 'sanity check' limit for the database.\n    2. However, it should be realistic for a heavy drinker but stop obvious spam (like 50 beers).\n    3. Return a SINGLE integer number in JSON format: {"limit": X}.\n    4. Typical range: 12 to 25.\n    5. If weight is low (<60kg), lower the limit.\n    6. If age is young (<21), lower the limit slightly;`;
+
+    const userPrompt = "Calculate limit.";
+
+    try {
+        const result = await llmService.generateCompletion(systemPrompt, userPrompt);
+        const jsonMatch = result.match(/\{.*"limit":\s*(\d+).*\}/s) || result.match(/(\d+)/);
+        if (jsonMatch) {
+            let limit = parseInt(jsonMatch[1]);
+            // Sanity bounds
+            if (limit < 8) limit = 8;
+            if (limit > 30) limit = 30;
+            return limit;
+        }
+    } catch (e) {
+        console.error("LLM Limit Calc Failed:", e);
+    }
+    return 15; // Default safe fallback
+}
 
 function generateCalendar(year, month, dailyStats) {
   // year, month are UTC based
@@ -195,13 +220,31 @@ export default {
       const now = new Date();
       const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-      let datesToLog = [];
+      // --- Smart Limit Check ---
+      const profile = await getOrCreateProfile(userId);
+      let personalLimit = profile?.daily_limit || 0;
 
+      if (profile && !personalLimit) {
+          // Calculate and cache limit
+          await interaction.deferReply({ ephemeral: true }); // Defer because LLM might take a second
+          personalLimit = await calculatePersonalLimit(profile.age, profile.height, profile.weight);
+          BeerModel.updateDailyLimit(userId, personalLimit);
+      } else if (!profile) {
+          personalLimit = 12; // Default for non-profile users
+      }
+
+      // Check today's total if logging for today
+      // For simplicity/safety, we apply this limit to ANY single day being logged
+      // First, determine dates to log to check counts
+      
+      let datesToLog = [];
+      // ... (logic to populate datesToLog) ...
       // Logic: Prioritize backfill, then date, then today
       if (backfillInput) {
         const days = backfillInput.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d) && d >= 1 && d <= 14);
         if (days.length === 0) {
-            return interaction.reply({ content: '❌ Invalid backfill. Use "1,2,3" (days ago). Max 14.', ephemeral: true });
+            const replyFn = interaction.deferred ? interaction.editReply : interaction.reply;
+            return replyFn.call(interaction, { content: '❌ Invalid backfill. Use "1,2,3" (days ago). Max 14.', ephemeral: true });
         }
         for (const d of days) {
             datesToLog.push(new Date(now.getTime() - d * 24 * 60 * 60 * 1000));
@@ -214,7 +257,10 @@ export default {
             d = new Date(dateInput);
         }
         
-        if (isNaN(d.getTime())) return interaction.reply({ content: '❌ Invalid date.', ephemeral: true });
+        if (isNaN(d.getTime())) {
+             const replyFn = interaction.deferred ? interaction.editReply : interaction.reply;
+             return replyFn.call(interaction, { content: '❌ Invalid date.', ephemeral: true });
+        }
         datesToLog.push(d);
       } else {
         datesToLog.push(now);
@@ -223,13 +269,25 @@ export default {
       // Validation
       const validDates = [];
       for (const d of datesToLog) {
-          if (d < twoWeeksAgo) continue; // Skip too old
-          // Normalize to YYYY-MM-DD
+          if (d < twoWeeksAgo) continue; 
           validDates.push(d.toISOString().split('T')[0]);
       }
 
       if (validDates.length === 0) {
-          return interaction.reply({ content: '❌ No valid dates to log (cannot log > 14 days ago).', ephemeral: true });
+          const replyFn = interaction.deferred ? interaction.editReply : interaction.reply;
+          return replyFn.call(interaction, { content: '❌ No valid dates to log (cannot log > 14 days ago).', ephemeral: true });
+      }
+
+      // Check limits for each date
+      for (const dateStr of validDates) {
+          const currentCount = BeerModel.getBeerCount(userId, guildId, dateStr, dateStr);
+          if (currentCount + amount > personalLimit) {
+              const replyFn = interaction.deferred ? interaction.editReply : interaction.reply;
+              return replyFn.call(interaction, { 
+                  content: `❌ **Limit Reached**\nYou are trying to log ${amount} beer(s), but you already have ${currentCount} for ${dateStr}.\nYour calculated safety limit is **${personalLimit}** beers/day.\n\n*If this is an error, please update your profile stats.*`, 
+                  ephemeral: true 
+              });
+          }
       }
 
       // Execute Log
@@ -245,7 +303,8 @@ export default {
         ? `🍺 **Logged ${amount} beer(s)** for ${validDates[0]}`
         : `🍺 **Logged ${totalLogged} beers** across ${validDates.length} days`;
         
-      return interaction.reply({ content: msg, ephemeral: false });
+      const replyFn = interaction.deferred ? interaction.editReply : interaction.reply;
+      return replyFn.call(interaction, { content: msg, ephemeral: false });
     }
 
     // --- STATUS ---

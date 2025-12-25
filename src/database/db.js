@@ -78,7 +78,8 @@ const migrateDb = () => {
       { name: 'tolerance_confidence', type: 'REAL', default: 'DEFAULT 0.5' },
       { name: 'tolerance_last_updated', type: 'INTEGER' },
       { name: 'activity_days', type: 'INTEGER', default: 'DEFAULT 0' },
-      { name: 'last_activity_date', type: 'TEXT' }
+      { name: 'last_activity_date', type: 'TEXT' },
+      { name: 'daily_limit', type: 'INTEGER', default: 'DEFAULT 0' }
     ];
 
     for (const col of newColumns) {
